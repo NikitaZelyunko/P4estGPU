@@ -1,2 +1,8 @@
 cmake-build-debug
 .idea
+.vscode
+build
+p4est
+p4est_step3_*.vtu
+p4est_step3_*.pvtu
+p4est_step3_*.visit
