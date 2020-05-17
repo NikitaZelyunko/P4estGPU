@@ -65,15 +65,23 @@
  }
  step3_ctx_t;
 
- typedef struct step3_ctx_to_cuda
- {
-   step3_ctx_t *d_step3_ctx;
-   double *center;
-   double *v;
- }step3_ctx_to_cuda_t;
+typedef struct step3_ctx_to_cuda
+{
+  step3_ctx_t *d_step3_ctx;
+  double *center;
+  double *v;
+}step3_ctx_to_cuda_t;
 
- typedef struct step3_compute_max_user_data_to_cuda {
-   double *d_user_data;
- }step3_compute_max_user_data_to_cuda_t;
+typedef struct step3_compute_max_user_data_to_cuda {
+  double *d_user_data;
+}step3_compute_max_user_data_to_cuda_t;
+
+typedef struct step3_timestep_update_user_data_to_cuda {
+  double *d_user_data;
+}step3_timestep_update_user_data_to_cuda_t;
+
+typedef struct step3_divergence_flux_user_data_to_cuda {
+  step3_data_t *d_user_data;
+}step3_divergence_flux_user_data_to_cuda_t;
 
 #endif

@@ -1,47 +1,646 @@
 #include "p4est_to_cuda.h"
+#include "cuda_iterate_loop_args.h"
 
-p4est_quadrants_to_cuda_t* mallocForQuadrants(sc_array_t *quadrants, quad_user_data_api_t *user_data_api) {
+typedef struct step3_data
+{
+  double              u;             /**< the state variable */
+  double              du[P4EST_DIM]; /**< the spatial derivatives */
+  double              dudt;          /**< the time derivative */
+}
+step3_data_t;
+
+p4est_quadrants_to_cuda_t* mallocForQuadrants(cuda4est_t* cuda4est, sc_array_t *quadrants, quad_user_data_api_t *user_data_api) {
     p4est_quadrants_to_cuda_t *quads_to_cuda = (p4est_quadrants_to_cuda_t*) malloc(sizeof(p4est_quadrants_to_cuda_t));
     sc_array_t *d_quadrants;
     size_t d_quadrants_array_size = quadrants->elem_size * quadrants->elem_count;
+    size_t quadrants_length = quadrants->elem_count;
     gpuErrchk(cudaMalloc((void**)&d_quadrants, sizeof(sc_array_t)));
     gpuErrchk(cudaMemcpy(d_quadrants, quadrants, sizeof(sc_array_t), cudaMemcpyHostToDevice));
     quads_to_cuda->d_quadrants = d_quadrants;
-    quads_to_cuda->quadrants_length = quadrants->elem_count;
+    quads_to_cuda->quadrants_length = quadrants_length;
+    quads_to_cuda->quadrants_allocated_size = d_quadrants_array_size;
 
-    char *h_quadrants_array_temp = (char*) malloc(d_quadrants_array_size * sizeof(char));
-    quad_user_data_allocate_info_t *quads_user_data_allocate_info = (quad_user_data_allocate_info_t*)malloc(sizeof(quad_user_data_allocate_info_t) * quadrants->elem_count);
+    all_quads_user_data_allocate_info_t * all_quads_user_data_allocate_info = (all_quads_user_data_allocate_info_t*) malloc(sizeof(all_quads_user_data_allocate_info_t));
+    user_data_api->alloc_cuda_memory_for_all_quads(all_quads_user_data_allocate_info, quadrants);
+    quads_to_cuda->all_quads_user_data_allocate_info = all_quads_user_data_allocate_info;
+    char *d_all_quads_user_data = (char*)all_quads_user_data_allocate_info->d_all_quads_user_data;
+    
     size_t quad_size = sizeof(p4est_quadrant_t);
-    char *cursor = h_quadrants_array_temp;
-    for(size_t i = 0; i < quadrants->elem_count; i++, cursor+=quad_size) {
-        p4est_quadrant_t *temp_quad = (p4est_quadrant_t*) malloc(sizeof(p4est_quadrant_t));
-        memcpy(temp_quad, p4est_quadrant_array_index (quadrants, i), sizeof(p4est_quadrant_t));
-        quad_user_data_allocate_info_t * temp_quad_user_data = quads_user_data_allocate_info + i;
-        temp_quad_user_data->user_data = temp_quad->p.user_data;
-        user_data_api->alloc_cuda_memory(temp_quad_user_data);
-        temp_quad->p.user_data = user_data_api->get_cuda_allocated_user_data(temp_quad_user_data);
-        memcpy(cursor, temp_quad, quad_size);
+    size_t user_data_size = cuda4est->p4est->data_size;
+    p4est_quadrant_t *h_quadrants_array_temp = (p4est_quadrant_t*) malloc(quadrants_length * quad_size);
+    p4est_quadrant_t *quad_cursor = h_quadrants_array_temp;
+    char *user_data_cursor = d_all_quads_user_data;
+    for(size_t i = 0; i < quadrants_length; i++, quad_cursor++, user_data_cursor+=user_data_size) {
+        p4est_quadrant_t *temp_quad = (p4est_quadrant_t*) malloc(quad_size);
+        memcpy(temp_quad, p4est_quadrant_array_index (quadrants, i), quad_size);
+        temp_quad->p.user_data = user_data_cursor;
+        memcpy(quad_cursor, temp_quad, quad_size);
+        free(temp_quad);
     }
-    quads_to_cuda->quads_user_data_allocate_info = quads_user_data_allocate_info;
-    char *d_quadrants_array_temp;
+
+    p4est_quadrant_t *d_quadrants_array_temp;
     gpuErrchk(cudaMalloc((void**)&d_quadrants_array_temp, d_quadrants_array_size));
     gpuErrchk(cudaMemcpy(d_quadrants_array_temp, h_quadrants_array_temp, d_quadrants_array_size, cudaMemcpyHostToDevice));
-    gpuErrchk(cudaMemcpy(&(d_quadrants->array), &d_quadrants_array_temp, sizeof(char*), cudaMemcpyHostToDevice));
+    gpuErrchk(cudaMemcpy(&(d_quadrants->array), &d_quadrants_array_temp, sizeof(p4est_quadrant_t*), cudaMemcpyHostToDevice));
     free(h_quadrants_array_temp);
-
+    
     quads_to_cuda->d_quadrants_array_temp = d_quadrants_array_temp;
-
     return quads_to_cuda;
 }
 
-void freeMemoryForQuadrants(p4est_quadrants_to_cuda_t* quads_to_cuda, quad_user_data_api_t *user_data_api) {
-    for(size_t i = 0; i < quads_to_cuda->quadrants_length; i++) {
-        quad_user_data_allocate_info_t *quad_user_data_allocate_info = &(quads_to_cuda->quads_user_data_allocate_info[i]);
-        user_data_api->free_cuda_memory(quad_user_data_allocate_info);
+void updateQuadrants(cuda4est_t* cuda4est, p4est_quadrants_to_cuda* quads_to_cuda, sc_array_t* quadrants, quad_user_data_api_t *user_data_api) {
+    sc_array_t *d_quadrants = quads_to_cuda->d_quadrants;
+    size_t d_quadrants_array_size = quads_to_cuda->quadrants_allocated_size;
+    size_t quadrants_length = quads_to_cuda->quadrants_length;
+    gpuErrchk(cudaMemcpy(d_quadrants, quadrants, sizeof(sc_array_t), cudaMemcpyHostToDevice));
+
+    all_quads_user_data_allocate_info_t * new_quads_user_data_allocate_info = (all_quads_user_data_allocate_info_t*) malloc(sizeof(all_quads_user_data_allocate_info_t));
+    void** all_host_quads_user_data = (void**)malloc(quadrants_length * sizeof(void*));
+    
+    for(size_t i = 0; i < quadrants_length; i++) {
+        all_host_quads_user_data[i] = p4est_quadrant_array_index(quadrants, i)->p.user_data;
     }
-    free(quads_to_cuda->quads_user_data_allocate_info);
+    
+    new_quads_user_data_allocate_info->all_quads_user_data = all_host_quads_user_data;
+    user_data_api->update_all_quads_cuda_user_data(quads_to_cuda->all_quads_user_data_allocate_info, new_quads_user_data_allocate_info);
+    size_t quad_size = sizeof(p4est_quadrant_t);
+    size_t user_data_size = cuda4est->p4est->data_size;
+
+    p4est_quadrant_t *h_quadrants_array_temp = (p4est_quadrant_t*) malloc(quadrants_length * quad_size);
+
+    p4est_quadrant_t *quad_cursor = h_quadrants_array_temp;
+    char *user_data_cursor = (char*) new_quads_user_data_allocate_info->d_all_quads_user_data;
+    for(size_t i = 0; i < quadrants->elem_count; i++, quad_cursor++, user_data_cursor+=user_data_size) {
+        p4est_quadrant_t *temp_quad = (p4est_quadrant_t*) malloc(sizeof(p4est_quadrant_t));
+        memcpy(temp_quad, p4est_quadrant_array_index (quadrants, i), sizeof(p4est_quadrant_t));
+        temp_quad->p.user_data = user_data_cursor;
+        memcpy(quad_cursor, temp_quad, quad_size);
+        free(temp_quad);
+    }
+
+    free(quads_to_cuda->all_quads_user_data_allocate_info);
+    quads_to_cuda->all_quads_user_data_allocate_info = new_quads_user_data_allocate_info;
+    p4est_quadrant_t *d_quadrants_array_temp = quads_to_cuda->d_quadrants_array_temp;
+    gpuErrchk(cudaMemcpy(d_quadrants_array_temp, h_quadrants_array_temp, d_quadrants_array_size, cudaMemcpyHostToDevice));
+    gpuErrchk(cudaMemcpy(&(d_quadrants->array), &d_quadrants_array_temp, sizeof(p4est_quadrant_t*), cudaMemcpyHostToDevice));
+    free(h_quadrants_array_temp);
+}
+
+void freeMemoryForQuadrants(p4est_quadrants_to_cuda_t* quads_to_cuda, quad_user_data_api_t *user_data_api) {
+    freeMemoryForFacesSides(quads_to_cuda);
+    user_data_api->free_cuda_memory_for_all_quads(quads_to_cuda->all_quads_user_data_allocate_info);
+    free(quads_to_cuda->all_quads_user_data_allocate_info);
     gpuErrchk(cudaFree(quads_to_cuda->d_quadrants_array_temp));
     gpuErrchk(cudaFree(quads_to_cuda->d_quadrants));
+}
+
+void downloadQuadrantsFromCuda(p4est_quadrants_to_cuda* quads_to_cuda, sc_array_t* quadrants, quad_user_data_api_t *user_data_api) {
+    user_data_api->download_all_quads_cuda_user_data_to_host(quads_to_cuda->all_quads_user_data_allocate_info, quadrants);
+}
+
+static void
+p4est_face_iterate_without_callbacks (p4est_iter_face_args_t * args)
+{
+
+  const int           left = 0;
+  const int           right = 1;
+  const int           local = 0;
+  const int           ghost = 1;
+  const int           ntc_str = P4EST_CHILDREN / 2;
+
+  p4est_iter_loop_args_t *loop_args = args->loop_args;
+  int                 start_level = loop_args->level;
+  int                *start_idx2 = args->start_idx2;
+  int                *level_num = loop_args->level_num;
+  sc_array_t        **quadrants = loop_args->quadrants;
+  size_t            **zindex = loop_args->index;
+  size_t             *first_index = loop_args->first_index;
+  int                *num_to_child = args->num_to_child;
+  p4est_quadrant_t  **test = loop_args->test;
+  size_t             *count = loop_args->count;
+  int                *test_level = loop_args->test_level;
+  int                *quad_idx2 = loop_args->quad_idx2;
+  int8_t             *refine = loop_args->refine;
+  int                 limit;
+
+  int                 i;
+  int                *Level = &(loop_args->level);
+  int                 side;
+  int                 type;
+  int                 st;
+  int                 level_idx2;
+  p4est_iter_face_info_t *info = &(args->info);
+  p4est_iter_face_side_t *fside;
+  p4est_quadrant_t  **quads;
+  p4est_locidx_t     *quadids;
+  int8_t             *is_ghost;
+  int                 child_corner;
+  int8_t              has_local;
+  sc_array_t          test_view;
+  p4est_iter_corner_args_t *corner_args = &(args->corner_args);
+  sc_array_t         *tier_rings = loop_args->tier_rings;
+#ifdef P4_TO_P8
+  int                 dir;
+#endif
+  int                 stop_refine;
+  int                 all_empty;
+
+  /* if we are at an outside face, then there is no right half to our search
+   * that needs to be coordinated with the left half */
+  limit = args->outside_face ? left : right;
+
+  /* level_idx2 moves us to the correct set of bounds within the index arrays
+   * for the level: it is a set of bounds because it includes all children at
+   * this level */
+  level_idx2 = start_level * CUDA_ITER_STRIDE;
+
+  for (side = left; side <= limit; side++) {
+
+    /* start_idx2 gives the ancestor id at level for the search area on this
+     * side, so quad_idx2[side] now gives the correct location in
+     * zindex[sidetype] of the bounds of the search area */
+    quad_idx2[side] = level_idx2 + start_idx2[side];
+
+    /* get the location in quadrants[sidetype] of the first quadrant in the
+     * search area, and the count of quadrants in the search area */
+    for (type = local; type <= ghost; type++) {
+      st = side * 2 + type;
+      first_index[st] = zindex[st][quad_idx2[side]];
+      count[st] = (zindex[st][quad_idx2[side] + 1] - first_index[st]);
+    }
+  }
+
+  /* face_iterate only runs if there is a chance of a local quadrant touching
+   * the desired face */
+  if (!args->outside_face) {
+    if (!count[left * 2 + local] && !count[right * 2 + local]) {
+      return;
+    }
+  }
+  else {
+    if (!count[left * 2 + local]) {
+      return;
+    }
+  }
+
+  /* we think of the search tree as being rooted at start_level, so we can
+   * think the branch number at start_level as 0, even if it actually is not */
+  level_num[start_level] = 0;
+  for (;;) {
+    /* for each sidetype, get the first quadrant in that sidetype search area
+     */
+    for (side = left; side <= limit; side++) {
+      for (type = local; type <= ghost; type++) {
+        st = side * 2 + type;
+        if (count[st]) {
+          test[st] = p4est_quadrant_array_index (quadrants[st],
+                                                 first_index[st]);
+          test_level[st] = (int) test[st]->level;
+        }
+        else {
+          test[st] = NULL;
+          test_level[st] = -1;
+        }
+      }
+    }
+    /* initially assume that each side needs to be refined */
+    refine[left] = refine[right] = 1;
+    stop_refine = 0;
+    has_local = 0;
+
+    /* get a candidate from each sidetype */
+    for (side = left; side <= limit; side++) {
+      for (type = local; type <= ghost; type++) {
+        st = side * 2 + type;
+        /* if the candidate from sidetype is the same size as the search area,
+         * then we do not refine this side */
+        if (test_level[st] == *Level) {
+          if (!stop_refine) {
+            stop_refine = 1;
+            /* we are not going to recur on the next level, instead moving to
+             * the next branch on this level */
+            level_num[*Level]++;
+            /* if there is no face callback (i.e., we are just running
+             * face_iterate to find edges and corners), then we're done with
+             * this branch */
+            //if (iter_face == NULL) {
+            //  goto change_search_area;
+            //}
+          }
+          P4EST_ASSERT (count[st] == 1);
+          P4EST_ASSERT (count[side * 2 + (type ^ 1)] == 0);
+          refine[side] = 0;
+          fside = cuda_iter_fside_array_index_int (&(info->sides), side);
+          fside->is_hanging = 0;
+          fside->is.full.quad = test[st];
+          fside->is.full.quadid = (p4est_locidx_t) first_index[st];
+          has_local = (has_local || (type == local));
+          fside->is.full.is_ghost = (type == ghost);
+        }
+      }
+    }
+    for (side = left; side <= limit; side++) {
+      if (refine[side]) {
+        if (stop_refine && count[side * 2 + local] == 0 &&
+            count[side * 2 + ghost] == 0) {
+          fside = cuda_iter_fside_array_index_int (&info->sides, side);
+          fside->is_hanging = 0;
+          fside->is.full.quad = NULL;
+          fside->is.full.is_ghost = 1;
+          fside->is.full.quadid = -1;
+          refine[side] = 0;
+        }
+      }
+      if (refine[side]) {
+        quad_idx2[side] = level_idx2 + CUDA_ITER_STRIDE;
+        for (type = local; type <= ghost; type++) {
+          st = side * 2 + type;
+          sc_array_init_view (&test_view, quadrants[st],
+                              first_index[st], count[st]);
+          cuda_iter_tier_insert (&test_view, *Level, zindex[st] +
+                                  quad_idx2[side], first_index[st],
+                                  tier_rings, test[st]);
+        }
+        if (stop_refine) {
+          fside = cuda_iter_fside_array_index_int (&(info->sides), side);
+          fside->is_hanging = 1;
+          quads = fside->is.hanging.quad;
+          quadids = fside->is.hanging.quadid;
+          is_ghost = fside->is.hanging.is_ghost;
+          for (i = 0; i < P4EST_CHILDREN / 2; i++) {
+            /* fside expects the hanging quadrants listed in z order, not search
+             * order */
+            child_corner = num_to_child[side * ntc_str + i];
+            child_corner =
+              p4est_corner_face_corners[child_corner][fside->face];
+            quads[child_corner] = NULL;
+            quadids[child_corner] = -1;
+            is_ghost[child_corner] = 1;
+            quad_idx2[side] = level_idx2 + CUDA_ITER_STRIDE +
+              num_to_child[side * ntc_str + i];
+            for (type = local; type <= ghost; type++) {
+              st = side * 2 + type;
+              first_index[st] = zindex[st][quad_idx2[side]];
+              count[st] = zindex[st][quad_idx2[side] + 1] - first_index[st];
+              /* if the search area is non-empty, by the two to one condition
+               * it must contain exactly one quadrant: if one of the two types
+               * is local, we run iter_face */
+              if (count[st]) {
+                quads[child_corner] = p4est_quadrant_array_index
+                  (quadrants[st], first_index[st]);
+                P4EST_ASSERT ((int) quads[child_corner]->level == *Level + 1);
+                quadids[child_corner] = (p4est_locidx_t) first_index[st];
+                is_ghost[child_corner] = (type == ghost);
+                has_local = (has_local || (type == local));
+              }
+            }
+          }
+        }
+      }
+    }
+    if (stop_refine) {
+      if (has_local) {
+        //iter_face (info, user_data);
+      }
+    }
+    else {
+      /* if we refined both sides, we descend to the next level from this branch
+       * and continue searching there */
+      level_num[++(*Level)] = 0;
+      level_idx2 += CUDA_ITER_STRIDE;
+    }
+
+  change_search_area:
+
+    for (;;) {
+      /* if we tried to advance the search area on start_level, we've completed
+       * the search */
+      if (level_num[start_level] > 0) {
+        P4EST_ASSERT (*Level == start_level);
+        return;
+      }
+
+      /* if we have tried to advance the search area past the number of
+       * descendants, that means that we have completed all of the branches on
+       * this level */
+      if (level_num[*Level] == P4EST_CHILDREN / 2) {
+#ifdef P4_TO_P8
+        /* if we have an edge callback, we need to run it on all of the edges
+         * between the face branches on this level */
+        if (loop_args->loop_edge) {
+          for (dir = 0; dir < 2; dir++) {
+            for (side = 0; side < 2; side++) {
+              P4EST_ASSERT (args->edge_args[dir][side].num_sides ==
+                            2 * (limit + 1));
+              cuda_iter_copy_indices (loop_args,
+                                       args->edge_args[dir][side].start_idx2,
+                                       limit + 1, 2);
+              p8est_edge_iterate (&(args->edge_args[dir][side]), user_data,
+                                  iter_edge, iter_corner);
+            }
+          }
+        }
+#endif
+        /* if we have a corner callback, we need to run it on the corner between
+         * the face branches on this level */
+        //if (iter_corner != NULL) {
+        //  P4EST_ASSERT (corner_args->num_sides ==
+        //                (P4EST_CHILDREN / 2) * (limit + 1));
+        //  cuda_iter_copy_indices (loop_args, corner_args->start_idx2,
+        //                           limit + 1, P4EST_HALF);
+        //  p4est_corner_iterate (corner_args, user_data, iter_corner);
+        //}
+
+        /* now that we're done on this level, go up a level and over a branch */
+        level_num[--(*Level)]++;
+        level_idx2 -= CUDA_ITER_STRIDE;
+      }
+      else {
+        /* at this point, we need to initialize the bounds of the search areas
+         * for this new branch */
+        all_empty = 1;
+        for (side = left; side <= limit; side++) {
+          quad_idx2[side] =
+            level_idx2 + num_to_child[side * ntc_str + level_num[*Level]];
+        }
+        for (side = left; side <= limit; side++) {
+          for (type = local; type <= ghost; type++) {
+            st = side * 2 + type;
+            first_index[st] = zindex[st][quad_idx2[side]];
+            count[st] = (zindex[st][quad_idx2[side] + 1] - first_index[st]);
+            if (type == local && count[st]) {
+              all_empty = 0;
+            }
+          }
+        }
+        if (all_empty) {
+          /* if there are no local quadrants in either of the search areas, we're
+           * done with this search area and proceed to the next branch on this
+           * level */
+          level_num[*Level]++;
+        }
+        else {
+          /* otherwise we are done changing the search area */
+          break;
+        }
+      }
+    }
+  }
+}
+
+static void
+cuda_volume_iterate_without_callbacks (p4est_iter_volume_args_t * args)
+{
+  const int           local = 0;
+  const int           ghost = 1;
+
+  int                 dir, side, type;
+
+  p4est_iter_loop_args_t *loop_args = args->loop_args;
+  int                 start_level = loop_args->level;
+  int                *Level = &(loop_args->level);
+  int                 start_idx2 = args->start_idx2;
+  int                *level_num = loop_args->level_num;
+  sc_array_t        **quadrants = loop_args->quadrants;
+  size_t            **zindex = loop_args->index;
+  size_t             *first_index = loop_args->first_index;
+  p4est_quadrant_t  **test = loop_args->test;
+  size_t             *count = loop_args->count;
+  int                *test_level = loop_args->test_level;
+  sc_array_t         *tier_rings = loop_args->tier_rings;
+  int                 quad_idx2;
+  sc_array_t          test_view;
+  p4est_iter_volume_info_t *info = &(args->info);
+  int                 level_idx2;
+  int                 refine;
+
+  /* level_idx2 moves us to the correct set of bounds within the index arrays
+   * for the level: it is a set of bounds because it includes all children at
+   * this level */
+  level_idx2 = start_level * CUDA_ITER_STRIDE;
+
+  /* start_idx2 gives the ancestor id at level for the search area,
+   * so quad_idx2 now gives the correct location in
+   * index[type] of the bounds of the search area */
+  quad_idx2 = level_idx2 + start_idx2;
+  for (type = local; type <= ghost; type++) {
+    first_index[type] = zindex[type][quad_idx2];
+    count[type] = zindex[type][quad_idx2 + 1] - first_index[type];
+  }
+
+  /* if ther are no local quadrants, nothing to be done */
+  if (!count[local]) {
+    return;
+  }
+
+  /* we think of the search tree as being rooted at start_level, so we can
+   * think the branch number at start_level as 0, even if it actually is not */
+  level_num[start_level] = 0;
+
+
+
+  for (;;) {
+
+    refine = 1;
+    /* for each type, get the first quadrant in the search area */
+    for (type = local; type <= ghost; type++) {
+      if (count[type]) {
+        test[type] = p4est_quadrant_array_index (quadrants[type],
+                                                 first_index[type]);
+        test_level[type] = (int) test[type]->level;
+        /* if the quadrant is the same size as the search area, we're done
+         * search */
+        if (test_level[type] == *Level) {
+          refine = 0;
+          P4EST_ASSERT (!count[type ^ 1]);
+          /* if the quadrant is local, we run the callback */
+          if (type == local) {
+            info->quad = test[type];
+            info->quadid = (p4est_locidx_t) first_index[type];
+            //if (iter_volume != NULL) {
+            //  iter_volume (info, user_data);
+            //}
+          }
+          /* proceed to the next search area on this level */
+          level_num[*Level]++;
+        }
+      }
+      else {
+        test[type] = NULL;
+        test_level[type] = -1;
+      }
+    }
+
+    if (refine) {
+      /* we need to refine, we take the search area and split it up, taking the
+       * indices for the refined search areas and placing them on the next tier in
+       * index[type] */
+      quad_idx2 = level_idx2 + CUDA_ITER_STRIDE;
+      for (type = local; type <= ghost; type++) {
+        sc_array_init_view (&test_view, quadrants[type],
+                            first_index[type], count[type]);
+        cuda_iter_tier_insert (&test_view, *Level, zindex[type] + quad_idx2,
+                                first_index[type], tier_rings, test[type]);
+      }
+
+      /* we descend to the first descendant search area and search there */
+      level_num[++(*Level)] = 0;
+      level_idx2 += CUDA_ITER_STRIDE;
+    }
+
+    for (;;) {
+      /* if we tried to advance the search area on start_level, we've completed
+       * the search */
+      if (level_num[start_level] > 0) {
+        return;
+      }
+
+      /* if we have tried to advance the search area past the number of
+       * descendants, that means that we have completed all of the branches on
+       * this level. we can now run the face_iterate for all of the faces between
+       * search areas on the level*/
+      if (level_num[*Level] == P4EST_CHILDREN) {
+        /* for each direction */
+        for (dir = 0; dir < P4EST_DIM; dir++) {
+          for (side = 0; side < P4EST_CHILDREN / 2; side++) {
+            cuda_iter_copy_indices (loop_args,
+                                     args->face_args[dir][side].start_idx2,
+                                     1, 2);
+            p4est_face_iterate_without_callbacks (&(args->face_args[dir][side]));
+          }
+        }
+#ifdef P4_TO_P8
+        /* if there is an edge or a corner callback, we need to use
+         * edge_iterate, so we set up the common corners and edge ids
+         * for all of the edges between the search areas */
+        if (loop_args->loop_edge) {
+          for (dir = 0; dir < P4EST_DIM; dir++) {
+            for (side = 0; side < 2; side++) {
+              cuda_iter_copy_indices (loop_args,
+                                       args->edge_args[dir][side].start_idx2,
+                                       1, 4);
+              p8est_edge_iterate (&(args->edge_args[dir][side]), user_data,
+                                  iter_edge, iter_corner);
+            }
+          }
+        }
+#endif
+        /* we are done at the level, so we go up a level and over a branch */
+        level_num[--(*Level)]++;
+        level_idx2 -= CUDA_ITER_STRIDE;
+      }
+      else {
+        /* quad_idx now gives the location in index[type] of the bounds
+         * of the current search area, from which we get the first quad
+         * and the count */
+        quad_idx2 = level_idx2 + level_num[*Level];
+        for (type = local; type <= ghost; type++) {
+          first_index[type] = zindex[type][quad_idx2];
+          count[type] = zindex[type][quad_idx2 + 1] - first_index[type];
+        }
+        if (!count[local]) {
+          /* if there are no local quadrants, we are done with this search area,
+           * and we advance to the next branch at this level */
+          level_num[*Level]++;
+        }
+        else {
+          /* otherwise we are done changing the search area */
+          break;
+        }
+      }
+    }
+  }
+  P4EST_ASSERT (*Level == start_level);
+}
+
+void mallocFacesSides(cuda4est_t* cuda4est, sc_array_t* quadrants, p4est_quadrants_to_cuda* quads_to_cuda, p4est_ghost_t* Ghost_layer, p4est_ghost_to_cuda_t* ghost_to_cuda) {
+  int remote = 0;
+  p4est_t *p4est = cuda4est->p4est;
+  int                 f, c;
+  p4est_topidx_t      t;
+  p4est_ghost_t       empty_ghost_layer;
+  p4est_ghost_t      *ghost_layer;
+  sc_array_t         *trees = p4est->trees;
+  p4est_connectivity_t *conn = p4est->connectivity;
+  size_t              global_num_trees = trees->elem_count;
+  p4est_iter_loop_args_t *loop_args;
+  p4est_iter_face_args_t face_args;
+#ifdef P4_TO_P8
+  int                 e;
+  p8est_iter_edge_args_t edge_args;
+#endif
+  p4est_iter_corner_args_t corner_args;
+  p4est_iter_volume_args_t args;
+  p4est_topidx_t      first_local_tree = p4est->first_local_tree;
+  p4est_topidx_t      last_local_tree = p4est->last_local_tree;
+  p4est_topidx_t      last_run_tree;
+  int32_t            *owned;
+  int32_t             mask, touch;
+
+  p4est_tree_t* first_tree = p4est_tree_array_index(p4est->trees, first_local_tree);
+
+  P4EST_ASSERT (p4est_is_valid (p4est));
+
+  if (p4est->first_local_tree < 0) {
+    return;
+  }
+
+  if (Ghost_layer == NULL) {
+    sc_array_init (&(empty_ghost_layer.ghosts), sizeof (p4est_quadrant_t));
+    empty_ghost_layer.tree_offsets = P4EST_ALLOC_ZERO (p4est_locidx_t,
+                                                       global_num_trees + 1);
+    empty_ghost_layer.proc_offsets = P4EST_ALLOC_ZERO (p4est_locidx_t,
+                                                       p4est->mpisize + 1);
+    ghost_layer = &empty_ghost_layer;
+  }
+  else {
+    ghost_layer = Ghost_layer;
+  }
+
+  /** initialize arrays that keep track of where we are in the search */
+  loop_args = cuda_iter_loop_args_new (conn,
+#ifdef P4_TO_P8
+                                        NULL,
+#endif
+                                        NULL, ghost_layer,
+                                        p4est->mpisize);
+
+  owned = cuda_iter_get_boundaries (p4est, &last_run_tree, remote);
+  last_run_tree = (last_run_tree < last_local_tree) ? last_local_tree :
+    last_run_tree;
+
+  /* start with the assumption that we only run on entities touches by the
+   * local processor's domain */
+  args.remote = remote;
+  face_args.remote = remote;
+#ifdef P4_TO_P8
+  edge_args.remote = remote;
+#endif
+  corner_args.remote = remote;
+
+  /** we have to loop over all trees and not just local trees because of the
+   * ghost layer */
+  for (t = first_local_tree; t <= last_run_tree; t++) {
+    if (t >= first_local_tree && t <= last_local_tree) {
+      cuda_iter_init_volume (&args, p4est, ghost_layer, loop_args, t);
+
+      cuda_volume_iterate_without_callbacks (&args);
+
+      cuda_iter_reset_volume (&args);
+    }
+  }
+
+  if (Ghost_layer == NULL) {
+    P4EST_FREE (empty_ghost_layer.tree_offsets);
+    P4EST_FREE (empty_ghost_layer.proc_offsets);
+  }
+
+  P4EST_FREE (owned);
+  cuda_iter_loop_args_destroy (loop_args);
+}
+
+void freeMemoryForFacesSides(p4est_quadrants_to_cuda* quads_to_cuda) {
+
 }
 
 p4est_ghost_to_cuda_t* mallocForGhost(p4est_t* p4est, p4est_ghost_t* ghost_layer) {

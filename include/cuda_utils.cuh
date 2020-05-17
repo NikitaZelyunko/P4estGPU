@@ -33,4 +33,11 @@ inline void arrayPropMemoryAllocate(
     gpuErrchk(cudaMemcpy(parent_ptr, d_arr, ptr_size, cudaMemcpyHostToDevice));
 }
 
+inline void arrayPropMemoryUpdate(
+    void** d_arr, size_t arr_size,
+    void* source_arr
+) {
+    gpuErrchk(cudaMemcpy(*d_arr, source_arr, arr_size, cudaMemcpyHostToDevice));
+}
+
 #endif

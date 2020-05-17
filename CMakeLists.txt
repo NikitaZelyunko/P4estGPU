@@ -25,11 +25,13 @@ link_directories(${P4EST_LIB})
 set_source_files_properties(${MAIN_SRC}/main.cu ${MAIN_SRC}/simple_cuda_iterate.cu ${MAIN_INCLUDE}/main_cuda_callbacks.cu PROPERTIES LANGUAGE "CUDA")
 
 add_executable(P4estGpu
-${MAIN_SRC}/cuda_iterate.cpp 
-${MAIN_SRC}/p4est_to_cuda.cpp
+        ${MAIN_SRC}/cuda_iterate.cpp 
+        ${MAIN_SRC}/p4est_to_cuda.cpp
+        ${MAIN_INCLUDE}/p4est_to_cuda.h
+        ${MAIN_INCLUDE}/cuda_iterate_loop_args.h
 
-${MAIN_SRC}/main.cu
-${MAIN_SRC}/simple_cuda_iterate.cu
+        ${MAIN_SRC}/simple_cuda_iterate.cu
+        ${MAIN_SRC}/main.cu
 )
 
 target_link_libraries(P4estGpu p4est sc m)

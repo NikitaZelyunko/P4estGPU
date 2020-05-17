@@ -30,10 +30,11 @@
 #else
 #include <p4est_algorithms.h>
 #include <p4est_bits.h>
-#include <cuda_iterate.h>
+//#include <cuda_iterate.h>
 #include <simple_cuda_iterate.h>
 // #include <p4est_iterate.h>
 #include <p4est_search.h>
+#include "cuda_iterate_loop_args.h"
 #endif
 
 /* tier ring functions:
@@ -45,22 +46,9 @@
  * we search the ring of the level of the split for the same first quadrant: if
  * it is found, the indices are copied from the saved tier; otherwise, they are
  * computed, and saved in the ring in place of the oldest tier in the ring */
-#define CUDA_ITER_STRIDE (P4EST_CHILDREN + 1)
-typedef struct cuda_iter_tier
-{
-  p4est_quadrant_t   *key;
-  size_t              array[CUDA_ITER_STRIDE];
-}
-cuda_iter_tier_t;
 
-typedef struct cuda_iter_tier_ring
-{
-  int                 next;
-  sc_array_t          tiers;
-}
-cuda_iter_tier_ring_t;
 
-static sc_array_t  *
+sc_array_t  *
 cuda_iter_tier_rings_new (int num_procs)
 {
   int                 i, j;
@@ -88,7 +76,7 @@ cuda_iter_tier_rings_new (int num_procs)
   return tier_rings;
 }
 
-static void
+void
 cuda_iter_tier_rings_destroy (sc_array_t * tier_rings)
 {
   size_t              zz;
@@ -101,7 +89,7 @@ cuda_iter_tier_rings_destroy (sc_array_t * tier_rings)
   sc_array_destroy (tier_rings);
 }
 
-static void
+void
 cuda_iter_tier_update (sc_array_t * view, int level, size_t * next_tier,
                         size_t shift)
 {
@@ -112,7 +100,7 @@ cuda_iter_tier_update (sc_array_t * view, int level, size_t * next_tier,
   }
 }
 
-static void
+void
 cuda_iter_tier_insert (sc_array_t * view, int level, size_t * next_tier,
                         size_t shift, sc_array_t * tier_rings,
                         p4est_quadrant_t * q)
@@ -164,96 +152,7 @@ cuda_iter_tier_insert (sc_array_t * view, int level, size_t * next_tier,
   ring->next %= limit;
 }
 
-/* loop arg functions */
-typedef struct cuda_iter_loop_args
-{
-  int                 alloc_size;       /* large enough to accomodate strange
-                                           corners/edges between trees */
-#ifdef P4_TO_P8
-  int8_t              loop_edge;        /* should edge_iterate be run */
-#endif
-  int8_t              loop_corner;      /* should corner_iterate by run */
-
-  int                 level;
-  int                *level_num;        /* an array that keeps track of which
-                                           branch we take at each step in the
-                                           heirarchical search areas */
-  int                *quad_idx2;        /* an indexing variable used in
-                                           the iterate functions: passed as an
-                                           argument to avoid using alloc/free
-                                           on each call */
-  sc_array_t        **quadrants;        /* the arrays, two for each side (one
-                                           local, one ghost), that contain the
-                                           quadrants in each search area */
-  size_t            **index;    /* for each sidetype, the indices in quadrants
-                                   that form the bounds of the heirarchical
-                                   search areas */
-  size_t             *first_index;      /* an indexing variable used in the
-                                           iterate functions: passed as an
-                                           argument to avoid using alloc/free
-                                           on each call */
-  size_t             *count;    /* a counting variable used in the iterate
-                                   functions: passed as an argument to
-                                   avoid using alloc/free on each call */
-  p4est_quadrant_t  **test;     /* a testing variable used in the iterate
-                                   functions: passed as an argument to
-                                   avoid using alloc/free on each call */
-  int                *test_level;       /* a testing variable used in
-                                           the iterate functions:: passed as an
-                                           argument to avoid using alloc/free
-                                           on each call */
-  int8_t             *refine;   /* a testing variable used in the iterate
-                                   functions: passed as an argument to avoid
-                                   using alloc/free on each call */
-  sc_array_t         *tier_rings;
-}
-cuda_iter_loop_args_t;
-/* loop arg functions */
-typedef struct p4est_iter_loop_args
-{
-  int                 alloc_size;       /* large enough to accomodate strange
-                                           corners/edges between trees */
-#ifdef P4_TO_P8
-  int8_t              loop_edge;        /* should edge_iterate be run */
-#endif
-  int8_t              loop_corner;      /* should corner_iterate by run */
-
-  int                 level;
-  int                *level_num;        /* an array that keeps track of which
-                                           branch we take at each step in the
-                                           heirarchical search areas */
-  int                *quad_idx2;        /* an indexing variable used in
-                                           the iterate functions: passed as an
-                                           argument to avoid using alloc/free
-                                           on each call */
-  sc_array_t        **quadrants;        /* the arrays, two for each side (one
-                                           local, one ghost), that contain the
-                                           quadrants in each search area */
-  size_t            **index;    /* for each sidetype, the indices in quadrants
-                                   that form the bounds of the heirarchical
-                                   search areas */
-  size_t             *first_index;      /* an indexing variable used in the
-                                           iterate functions: passed as an
-                                           argument to avoid using alloc/free
-                                           on each call */
-  size_t             *count;    /* a counting variable used in the iterate
-                                   functions: passed as an argument to
-                                   avoid using alloc/free on each call */
-  p4est_quadrant_t  **test;     /* a testing variable used in the iterate
-                                   functions: passed as an argument to
-                                   avoid using alloc/free on each call */
-  int                *test_level;       /* a testing variable used in
-                                           the iterate functions:: passed as an
-                                           argument to avoid using alloc/free
-                                           on each call */
-  int8_t             *refine;   /* a testing variable used in the iterate
-                                   functions: passed as an argument to avoid
-                                   using alloc/free on each call */
-  sc_array_t         *tier_rings;
-}
-p4est_iter_loop_args_t;
-
-static p4est_iter_loop_args_t *
+p4est_iter_loop_args_t *
 cuda_iter_loop_args_new (p4est_connectivity_t * conn,
 #ifdef P4_TO_P8
                           p8est_iter_edge_t iter_edge,
@@ -348,7 +247,7 @@ cuda_iter_loop_args_new (p4est_connectivity_t * conn,
   return loop_args;
 }
 
-static void
+void
 cuda_iter_loop_args_destroy (p4est_iter_loop_args_t * loop_args)
 {
   int                 i;
@@ -613,7 +512,7 @@ cuda_iter_init_loop_corner (p4est_iter_loop_args_t * loop_args,
  * The whole heirarchy doesn't need to be copied, just the most recent bounds
  * from the correct starting sections (start_idx2).
  */
-static void
+void
 cuda_iter_copy_indices (p4est_iter_loop_args_t * loop_args,
                          const int *start_idx2, int old_num, int factor)
 {
@@ -633,28 +532,6 @@ cuda_iter_copy_indices (p4est_iter_loop_args_t * loop_args,
     }
   }
 }
-
-/* corner iterate function */
-typedef struct cuda_iter_corner_args
-{
-  int                 num_sides;
-  int                *start_idx2;
-  int                 remote;
-  cuda_iter_loop_args_t *loop_args;
-  cuda_iter_corner_info_t info;
-}
-cuda_iter_corner_args_t;
-
-/* corner iterate function */
-typedef struct p4est_iter_corner_args
-{
-  int                 num_sides;
-  int                *start_idx2;
-  int                 remote;
-  p4est_iter_loop_args_t *loop_args;
-  p4est_iter_corner_info_t info;
-}
-p4est_iter_corner_args_t;
 
 static int
 cside_compare (const void *a, const void *b)
@@ -1897,70 +1774,6 @@ p8est_edge_iterate (p8est_iter_edge_args_t * args, void *user_data,
 }
 #endif
 
-/* face iterate functions */
-typedef struct cuda_iter_face_args
-{
-  cuda_iter_loop_args_t *loop_args;
-  int                 start_idx2[2];
-  /* when a search branch is refined,
-     num_to_child says which child id
-     corresponds to the branch number for
-     each side of the face. e.g. Suppose
-     face[left] = 1, face[right] = 0, and
-     orientation = 0 in 3D. The child ids
-     of the descendants of the current
-     search area that touch face[left]
-     are 1, 3, 5, 7, and given
-     face[right] and the orientation, the
-     descendants that are opposite them
-     are 0, 2, 4, 6, respectively:
-     therefore num_to_child =
-     { 1, 3, 5, 7, 0, 2, 4, 6} */
-  int                 num_to_child[P4EST_CHILDREN];
-  int8_t              outside_face;     /* indicates if we are at a tree
-                                           boundary without a neighbor across
-                                           the face */
-#ifdef P4_TO_P8
-  p8est_iter_edge_args_t edge_args[2][2];
-#endif
-  cuda_iter_corner_args_t corner_args;
-  cuda_iter_face_info_t info;
-  int                 remote;
-}
-cuda_iter_face_args_t;
-
-/* face iterate functions */
-typedef struct p4est_iter_face_args
-{
-  p4est_iter_loop_args_t *loop_args;
-  int                 start_idx2[2];
-  /* when a search branch is refined,
-     num_to_child says which child id
-     corresponds to the branch number for
-     each side of the face. e.g. Suppose
-     face[left] = 1, face[right] = 0, and
-     orientation = 0 in 3D. The child ids
-     of the descendants of the current
-     search area that touch face[left]
-     are 1, 3, 5, 7, and given
-     face[right] and the orientation, the
-     descendants that are opposite them
-     are 0, 2, 4, 6, respectively:
-     therefore num_to_child =
-     { 1, 3, 5, 7, 0, 2, 4, 6} */
-  int                 num_to_child[P4EST_CHILDREN];
-  int8_t              outside_face;     /* indicates if we are at a tree
-                                           boundary without a neighbor across
-                                           the face */
-#ifdef P4_TO_P8
-  p8est_iter_edge_args_t edge_args[2][2];
-#endif
-  p4est_iter_corner_args_t corner_args;
-  p4est_iter_face_info_t info;
-  int                 remote;
-}
-p4est_iter_face_args_t;
-
 /* given valid face arguments, setup corner arguments for a corner search that
  * is called for a corner where four adjacent, coplaner faces meet.
  */
@@ -2538,35 +2351,6 @@ p4est_face_iterate (p4est_iter_face_args_t * args, void *user_data,
   }
 }
 
-/* volume iterate functions */
-typedef struct cuda_iter_volume_args
-{
-  cuda_iter_loop_args_t *loop_args;
-  int                 start_idx2;
-  cuda_iter_face_args_t face_args[P4EST_DIM][P4EST_CHILDREN / 2];
-#ifdef P4_TO_P8
-  p8est_iter_edge_args_t edge_args[P4EST_DIM][2];
-#endif
-  cuda_iter_corner_args_t corner_args;
-  cuda_iter_volume_info_t info;
-  int                 remote;
-}
-cuda_iter_volume_args_t;
-
-/* volume iterate functions */
-typedef struct p4est_iter_volume_args
-{
-  p4est_iter_loop_args_t *loop_args;
-  int                 start_idx2;
-  p4est_iter_face_args_t face_args[P4EST_DIM][P4EST_CHILDREN / 2];
-#ifdef P4_TO_P8
-  p8est_iter_edge_args_t edge_args[P4EST_DIM][2];
-#endif
-  p4est_iter_corner_args_t corner_args;
-  p4est_iter_volume_info_t info;
-  int                 remote;
-}
-p4est_iter_volume_args_t;
 
 /* given valid volume arguments, setup face arguments for a face search that is
  * called for a face between two adjacent volumes: there are P4EST_DIM
@@ -2717,7 +2501,7 @@ cuda_iter_init_corner_from_volume (p4est_iter_corner_args_t * args,
 }
 
 /* initialize volume arguments for a search in a tree */
-static void
+void
 cuda_iter_init_volume (p4est_iter_volume_args_t * args, p4est_t * p4est,
                         p4est_ghost_t * ghost_layer,
                         p4est_iter_loop_args_t * loop_args, p4est_topidx_t t)
@@ -2750,7 +2534,7 @@ cuda_iter_init_volume (p4est_iter_volume_args_t * args, p4est_t * p4est,
   cuda_iter_init_loop_volume (args->loop_args, t, p4est, ghost_layer);
 }
 
-static void
+void
 cuda_iter_reset_volume (p4est_iter_volume_args_t * args)
 {
   int                 i, j;
@@ -2816,6 +2600,193 @@ p4est_volume_iterate_simple (p4est_t * p4est, p4est_ghost_t * ghost_layer,
  }
 
 
+static void
+cuda_volume_iterate (p4est_iter_volume_args_t * args, void *user_data,
+                      user_data_for_cuda_t *user_data_volume_cuda_api, 
+                      cuda_iter_volume_api_t* iter_volume_api,
+                      p4est_iter_volume_t iter_volume,
+                      cuda_iter_face_api_t* iter_face_api,
+                      p4est_iter_face_t iter_face,
+#ifdef P4_TO_P8
+                      p8est_iter_edge_t iter_edge,
+#endif
+                      p4est_iter_corner_t iter_corner)
+{
+  const int           local = 0;
+  const int           ghost = 1;
+
+  int                 dir, side, type;
+
+  p4est_iter_loop_args_t *loop_args = args->loop_args;
+  int                 start_level = loop_args->level;
+  int                *Level = &(loop_args->level);
+  int                 start_idx2 = args->start_idx2;
+  int                *level_num = loop_args->level_num;
+  sc_array_t        **quadrants = loop_args->quadrants;
+  size_t            **zindex = loop_args->index;
+  size_t             *first_index = loop_args->first_index;
+  p4est_quadrant_t  **test = loop_args->test;
+  size_t             *count = loop_args->count;
+  int                *test_level = loop_args->test_level;
+  sc_array_t         *tier_rings = loop_args->tier_rings;
+  int                 quad_idx2;
+  sc_array_t          test_view;
+  p4est_iter_volume_info_t *info = &(args->info);
+  int                 level_idx2;
+  int                 refine;
+
+  /* level_idx2 moves us to the correct set of bounds within the index arrays
+   * for the level: it is a set of bounds because it includes all children at
+   * this level */
+  level_idx2 = start_level * CUDA_ITER_STRIDE;
+
+  /* start_idx2 gives the ancestor id at level for the search area,
+   * so quad_idx2 now gives the correct location in
+   * index[type] of the bounds of the search area */
+  quad_idx2 = level_idx2 + start_idx2;
+  for (type = local; type <= ghost; type++) {
+    first_index[type] = zindex[type][quad_idx2];
+    count[type] = zindex[type][quad_idx2 + 1] - first_index[type];
+  }
+
+  /* if ther are no local quadrants, nothing to be done */
+  if (!count[local]) {
+    return;
+  }
+
+  /* we think of the search tree as being rooted at start_level, so we can
+   * think the branch number at start_level as 0, even if it actually is not */
+  level_num[start_level] = 0;
+
+
+
+  for (;;) {
+
+
+
+    refine = 1;
+    /* for each type, get the first quadrant in the search area */
+    for (type = local; type <= ghost; type++) {
+      if (count[type]) {
+        test[type] = p4est_quadrant_array_index (quadrants[type],
+                                                 first_index[type]);
+        test_level[type] = (int) test[type]->level;
+        /* if the quadrant is the same size as the search area, we're done
+         * search */
+        if (test_level[type] == *Level) {
+          refine = 0;
+          P4EST_ASSERT (!count[type ^ 1]);
+          /* if the quadrant is local, we run the callback */
+          if (type == local) {
+            info->quad = test[type];
+            info->quadid = (p4est_locidx_t) first_index[type];
+            if (iter_volume != NULL) {
+              iter_volume (info, user_data);
+            }
+          }
+          /* proceed to the next search area on this level */
+          level_num[*Level]++;
+        }
+      }
+      else {
+        test[type] = NULL;
+        test_level[type] = -1;
+      }
+    }
+
+    if (refine) {
+      /* we need to refine, we take the search area and split it up, taking the
+       * indices for the refined search areas and placing them on the next tier in
+       * index[type] */
+      quad_idx2 = level_idx2 + CUDA_ITER_STRIDE;
+      for (type = local; type <= ghost; type++) {
+        sc_array_init_view (&test_view, quadrants[type],
+                            first_index[type], count[type]);
+        cuda_iter_tier_insert (&test_view, *Level, zindex[type] + quad_idx2,
+                                first_index[type], tier_rings, test[type]);
+      }
+
+      /* we descend to the first descendant search area and search there */
+      level_num[++(*Level)] = 0;
+      level_idx2 += CUDA_ITER_STRIDE;
+    }
+
+    for (;;) {
+      /* if we tried to advance the search area on start_level, we've completed
+       * the search */
+      if (level_num[start_level] > 0) {
+        return;
+      }
+
+      /* if we have tried to advance the search area past the number of
+       * descendants, that means that we have completed all of the branches on
+       * this level. we can now run the face_iterate for all of the faces between
+       * search areas on the level*/
+      if (level_num[*Level] == P4EST_CHILDREN) {
+        /* for each direction */
+        for (dir = 0; dir < P4EST_DIM; dir++) {
+          for (side = 0; side < P4EST_CHILDREN / 2; side++) {
+            cuda_iter_copy_indices (loop_args,
+                                     args->face_args[dir][side].start_idx2,
+                                     1, 2);
+            p4est_face_iterate (&(args->face_args[dir][side]), user_data,
+                                iter_face,
+#ifdef P4_TO_P8
+                                iter_edge,
+#endif
+                                iter_corner);
+          }
+        }
+#ifdef P4_TO_P8
+        /* if there is an edge or a corner callback, we need to use
+         * edge_iterate, so we set up the common corners and edge ids
+         * for all of the edges between the search areas */
+        if (loop_args->loop_edge) {
+          for (dir = 0; dir < P4EST_DIM; dir++) {
+            for (side = 0; side < 2; side++) {
+              cuda_iter_copy_indices (loop_args,
+                                       args->edge_args[dir][side].start_idx2,
+                                       1, 4);
+              p8est_edge_iterate (&(args->edge_args[dir][side]), user_data,
+                                  iter_edge, iter_corner);
+            }
+          }
+        }
+#endif
+        /* if there is a corner callback, we need to call corner_iterate on
+         * the corner in the middle of the search areas */
+        if (loop_args->loop_corner) {
+          cuda_iter_copy_indices (loop_args, args->corner_args.start_idx2, 1,
+                                   P4EST_CHILDREN);
+          p4est_corner_iterate (&(args->corner_args), user_data, iter_corner);
+        }
+        /* we are done at the level, so we go up a level and over a branch */
+        level_num[--(*Level)]++;
+        level_idx2 -= CUDA_ITER_STRIDE;
+      }
+      else {
+        /* quad_idx now gives the location in index[type] of the bounds
+         * of the current search area, from which we get the first quad
+         * and the count */
+        quad_idx2 = level_idx2 + level_num[*Level];
+        for (type = local; type <= ghost; type++) {
+          first_index[type] = zindex[type][quad_idx2];
+          count[type] = zindex[type][quad_idx2 + 1] - first_index[type];
+        }
+        if (!count[local]) {
+          /* if there are no local quadrants, we are done with this search area,
+           * and we advance to the next branch at this level */
+          level_num[*Level]++;
+        }
+        else {
+          /* otherwise we are done changing the search area */
+          break;
+        }
+      }
+    }
+  }
+  P4EST_ASSERT (*Level == start_level);
+}
 
 static void
 p4est_volume_iterate (p4est_iter_volume_args_t * args, void *user_data,
@@ -2998,7 +2969,7 @@ p4est_volume_iterate (p4est_iter_volume_args_t * args, void *user_data,
   P4EST_ASSERT (*Level == start_level);
 }
 
-static int32_t     *
+int32_t     *
 cuda_iter_get_boundaries (p4est_t * p4est, p4est_topidx_t * last_run_tree,
                            int remote)
 {
@@ -3264,6 +3235,7 @@ cuda_iterate_ext (cuda4est_t * cuda4est, p4est_ghost_t * Ghost_layer,
                   p4est_iter_volume_t iter_volume,
                   cuda_iter_volume_api_t* cuda_iter_volume_api,
                   p4est_iter_face_t iter_face,
+                  cuda_iter_face_api_t* cuda_iter_face_api,
 #ifdef P4_TO_P8
                    p8est_iter_edge_t iter_edge,
 #endif
@@ -3290,6 +3262,8 @@ cuda_iterate_ext (cuda4est_t * cuda4est, p4est_ghost_t * Ghost_layer,
   p4est_topidx_t      last_run_tree;
   int32_t            *owned;
   int32_t             mask, touch;
+
+  p4est_tree_t* first_tree = p4est_tree_array_index(p4est->trees, first_local_tree);
 
   P4EST_ASSERT (p4est_is_valid (p4est));
 
@@ -3356,7 +3330,7 @@ cuda_iterate_ext (cuda4est_t * cuda4est, p4est_ghost_t * Ghost_layer,
     if (t >= first_local_tree && t <= last_local_tree) {
       cuda_iter_init_volume (&args, p4est, ghost_layer, loop_args, t);
 
-      p4est_volume_iterate (&args, user_data, iter_volume, iter_face,
+      cuda_volume_iterate (&args, user_data, user_data_volume_cuda_api, cuda_iter_volume_api, iter_volume, cuda_iter_face_api, iter_face,
 #ifdef P4_TO_P8
                             iter_edge,
 #endif
@@ -3431,13 +3405,15 @@ cuda_iterate (cuda4est_t * cuda4est, p4est_ghost_t * Ghost_layer,
               void* user_data,
               user_data_for_cuda_t *user_data_volume_cuda_api,
               p4est_iter_volume_t iter_volume,
-              cuda_iter_volume_api_t* cuda_iter_volume_api, p4est_iter_face_t iter_face,
+              cuda_iter_volume_api_t* cuda_iter_volume_api,
+              p4est_iter_face_t iter_face,
+              cuda_iter_face_api_t* cuda_iter_face_api,
 #ifdef P4_TO_P8
                p8est_iter_edge_t iter_edge,
 #endif
                p4est_iter_corner_t iter_corner)
 {
-  cuda_iterate_ext (cuda4est, Ghost_layer, user_data, user_data_volume_cuda_api, iter_volume, cuda_iter_volume_api, iter_face,
+  cuda_iterate_ext (cuda4est, Ghost_layer, user_data, user_data_volume_cuda_api, iter_volume, cuda_iter_volume_api, iter_face, cuda_iter_face_api,
 #ifdef P4_TO_P8
                      iter_edge,
 #endif

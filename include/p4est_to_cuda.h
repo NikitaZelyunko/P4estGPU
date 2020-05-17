@@ -5,6 +5,8 @@
 #include <p4est.h>
 #include <p4est_ghost.h>
 #include <p4est_extended.h>
+//#include <cuda_iterate.h>
+#include <p4est_iterate.h>
 
 typedef struct user_data_for_cuda user_data_for_cuda_t;
 
@@ -16,6 +18,7 @@ typedef void (*copy_user_data_from_device_t)(user_data_for_cuda_t* user_data_api
 struct user_data_for_cuda {
     void* user_data;
     void* cuda_memory_allocating_info;
+    size_t user_data_elem_count;
     alloc_cuda_memory_t alloc_cuda_memory;
     free_cuda_memory_t free_cuda_memory;
     get_cuda_allocated_user_data_t get_cuda_allocated_user_data;
@@ -23,26 +26,50 @@ struct user_data_for_cuda {
 };
 
 typedef struct quad_user_data_allocate_info quad_user_data_allocate_info_t;
+typedef struct all_quads_user_data_allocate_info all_quads_user_data_allocate_info_t;
 
-typedef void (*alloc_quad_cuda_memory_t)(quad_user_data_allocate_info_t* user_data_api);
-typedef void (*free_quad_cuda_memory_t)(quad_user_data_allocate_info_t* user_data_api);
-typedef void* (*get_quad_cuda_allocated_user_data_t)(quad_user_data_allocate_info_t* user_data_api);
+typedef void (*alloc_quad_cuda_memory_t)(quad_user_data_allocate_info_t* user_data_allocate_info);
+typedef void (*alloc_all_quads_cuda_memory_t)(all_quads_user_data_allocate_info_t* all_quads_user_data_allocate_info, sc_array_t* quadrants);
+typedef void (*update_quad_cuda_user_data_t)(quad_user_data_allocate_info_t* old_user_data_allocate_info, quad_user_data_allocate_info_t* new_user_data_allocate_info);
+typedef void (*update_all_quads_cuda_user_data_t)(all_quads_user_data_allocate_info* old_user_data_allocate_info, all_quads_user_data_allocate_info* new_user_data_allocate_info);
+typedef void (*free_quad_cuda_memory_t)(quad_user_data_allocate_info_t* user_data_allocate_info);
+typedef void (*free_all_quads_cuda_memory_t)(all_quads_user_data_allocate_info_t* all_quads_user_data_allocate_info);
+typedef void* (*get_quad_cuda_allocated_user_data_t)(quad_user_data_allocate_info_t* user_data_allocate_info);
+typedef void (*download_quad_cuda_user_data_to_host_t)(quad_user_data_allocate_info_t* user_data_allocate_info);
+typedef void (*download_all_quads_cuda_user_data_to_host_t)(all_quads_user_data_allocate_info_t* all_quads_user_data_allocate_info, sc_array_t* quadrants);
 
 struct quad_user_data_allocate_info {
     void* user_data;
     void* cuda_memory_allocating_info;
 };
 
+struct all_quads_user_data_allocate_info {
+    void* d_all_quads_user_data;
+    void** all_quads_user_data;
+    size_t quads_count;
+};
+
 typedef struct quad_user_data_api {
     alloc_quad_cuda_memory_t alloc_cuda_memory;
+    alloc_all_quads_cuda_memory_t alloc_cuda_memory_for_all_quads;
+    update_quad_cuda_user_data_t update_quad_cuda_user_data;
+    update_all_quads_cuda_user_data_t update_all_quads_cuda_user_data;
     free_quad_cuda_memory_t free_cuda_memory;
+    free_all_quads_cuda_memory_t free_cuda_memory_for_all_quads;
     get_quad_cuda_allocated_user_data_t get_cuda_allocated_user_data;
+    download_quad_cuda_user_data_to_host_t download_quad_cuda_user_data_to_host;
+    download_all_quads_cuda_user_data_to_host_t download_all_quads_cuda_user_data_to_host;
 }quad_user_data_api_t;
+
+typedef struct p4est_cuda_memory_allocate_info p4est_cuda_memory_allocate_info_t;
+typedef struct p4est_quadrants_to_cuda p4est_quadrants_to_cuda_t;
 
 typedef struct cuda4est {
     p4est_t *p4est;
     user_data_for_cuda_t *user_data_api;
     quad_user_data_api_t *quad_user_data_api;
+    p4est_cuda_memory_allocate_info_t *p4est_memory_allocate_info;
+    p4est_quadrants_to_cuda_t *quads_to_cuda;
 } cuda4est_t;
 
 typedef struct p4est_quadrant_data_to_cuda {
@@ -130,18 +157,25 @@ inline void cuda_quadrants_memory_free(array_allocation_cuda_info_t* allocation_
     gpuErrchk(cudaFree(allocation_info->d_quadrants));
 }
 
-typedef struct p4est_quadrants_to_cuda
+struct p4est_quadrants_to_cuda
 {
     sc_array_t *d_quadrants;
-    char *d_quadrants_array_temp;
+    p4est_quadrant_t *d_quadrants_array_temp;
     size_t quadrants_length;
-    quad_user_data_allocate_info_t *quads_user_data_allocate_info;
-}
-p4est_quadrants_to_cuda_t;
+    size_t quadrants_allocated_size;
+    p4est_iter_face_side_t *d_sides;
+    all_quads_user_data_allocate_info_t * all_quads_user_data_allocate_info;
+};
 
-p4est_quadrants_to_cuda* mallocForQuadrants(sc_array_t* quadrants, quad_user_data_api_t *user_data_api);
+p4est_quadrants_to_cuda* mallocForQuadrants(cuda4est_t* cuda4est, sc_array_t* quadrants, quad_user_data_api_t *user_data_api);
+void updateQuadrants(cuda4est_t* cuda4est, p4est_quadrants_to_cuda* quads_to_cuda, sc_array_t* quadrants, quad_user_data_api_t *user_data_api);
 void freeMemoryForQuadrants(p4est_quadrants_to_cuda* quads_to_cuda, quad_user_data_api_t *user_data_api);
+void downloadQuadrantsFromCuda(p4est_quadrants_to_cuda* quads_to_cuda, sc_array_t* quadrants, quad_user_data_api_t *user_data_api);
 
+typedef struct p4est_faces_to_cuda
+{
+    p4est_iter_face_side_t* d_faces;
+}p4est_faces_to_cuda_t;
 
 typedef struct p4est_ghost_to_cuda
 {
@@ -161,6 +195,9 @@ p4est_ghost_to_cuda_t;
 
 p4est_ghost_to_cuda_t* mallocForGhost(p4est_t* p4est, p4est_ghost_t* ghost_layer);
 void freeMemoryForGhost(p4est_ghost_to_cuda_t* ghost_to_cuda);
+
+void mallocFacesSides(cuda4est_t* cuda4est, sc_array_t* quadrants, p4est_quadrants_to_cuda* quads_to_cuda, p4est_ghost_t* Ghost_layer, p4est_ghost_to_cuda_t* ghost_to_cuda);
+void freeMemoryForFacesSides(p4est_quadrants_to_cuda* quads_to_cuda);
 
 typedef struct sc_array_cuda_memory_allocate_info {
     sc_array_t *d_sc_arr;
@@ -327,7 +364,7 @@ typedef struct p4est_connectivity_cuda_memory_allocate_info {
 p4est_connectivity_cuda_memory_allocate_info_t* p4est_connectivity_memory_alloc(p4est_connectivity_t* p4est_connectivity);
 void p4est_connectivity_memory_free(p4est_connectivity_cuda_memory_allocate_info_t* allocate_info);
 
-typedef struct p4est_cuda_memory_allocate_info {
+struct p4est_cuda_memory_allocate_info {
     p4est_t *d_p4est;
     user_data_for_cuda_t *d_user_data_api;
 
@@ -342,9 +379,81 @@ typedef struct p4est_cuda_memory_allocate_info {
     sc_mempool_t *d_user_data_pool;
     sc_mempool_cuda_memory_allocate_info_t *d_quadrant_pool_cuda_allocate_info;
     p4est_inspect_cuda_memory_allocate_info_t *d_inspect_cuda_allocate_info;
-}p4est_cuda_memory_allocate_info_t;
+};
 
 p4est_cuda_memory_allocate_info_t* p4est_memory_alloc(cuda4est_t* cuda4est);
 void p4est_memory_free(p4est_cuda_memory_allocate_info_t* allocate_info, quad_user_data_api_t* user_data_api);
+
+
+extern "C" {
+    void pass_pointers_for_quads_user_data(cuda4est_t* cuda4est, sc_array_t* quadrants, sc_array_t* d_quadrants, void* user_data_array);
+
+    /** Return a pointer to an array element indexed by a p4est_topidx_t.
+     * \param [in] index needs to be in [0]..[elem_count-1].
+     */
+    /*@unused@*/
+    __forceinline__ __device__ p4est_tree_t *
+    p4est_device_tree_array_index (sc_array_t * array, p4est_topidx_t it)
+    {
+    P4EST_ASSERT (array->elem_size == sizeof (p4est_tree_t));
+    P4EST_ASSERT (it >= 0 && (size_t) it < array->elem_count);
+
+    return (p4est_tree_t *) (array->array +
+                            sizeof (p4est_tree_t) * (size_t) it);
+    }
+
+    /** Return a pointer to a quadrant array element indexed by a size_t. */
+    /*@unused@*/
+    __forceinline__ __device__ p4est_quadrant_t *
+    p4est_device_quadrant_array_index (sc_array_t * array, size_t it)
+    {
+        P4EST_ASSERT (array->elem_size == sizeof (p4est_quadrant_t));
+        P4EST_ASSERT (it < array->elem_count);
+
+        return (p4est_quadrant_t *) (array->array + sizeof (p4est_quadrant_t) * it);
+    }
+
+    /** Return a pointer to a iter_face_side array element indexed by a int.
+     */
+    /*@unused@*/
+    __forceinline__ __device__ p4est_iter_face_side_t *
+    p4est_device_iter_fside_array_index_int (sc_array_t * array, int it)
+    {
+    P4EST_ASSERT (array->elem_size == sizeof (p4est_iter_face_side_t));
+    P4EST_ASSERT (it >= 0 && (size_t) it < array->elem_count);
+
+    return (p4est_iter_face_side_t *)
+        (array->array + sizeof (p4est_iter_face_side_t) * (size_t) it);
+    }
+
+    /** Return a pointer to a iter_face_side array element indexed by a size_t.
+     */
+    /*@unused@*/
+    __forceinline__ __device__ p4est_iter_face_side_t *
+    p4est_device_iter_fside_array_index (sc_array_t * array, size_t it)
+    {
+    P4EST_ASSERT (array->elem_size == sizeof (p4est_iter_face_side_t));
+    P4EST_ASSERT (it < array->elem_count);
+
+    return (p4est_iter_face_side_t *)
+        (array->array + sizeof (p4est_iter_face_side_t) * it);
+    }
+
+    /** The finest level of the quadtree for representing nodes */
+    #define P4EST_DEVICE_MAXLEVEL 30
+    /** The length of a quadrant of level l */
+    #define P4EST_DEVICE_QUADRANT_LEN(l) ((p4est_qcoord_t) 1 << (P4EST_DEVICE_MAXLEVEL - (l)))
+
+    /** The length of a side of the root quadrant */
+    #define P4EST_DEVICE_ROOT_LEN ((p4est_qcoord_t) 1 << P4EST_DEVICE_MAXLEVEL)
+
+    /** The length of a quadrant of level l */
+    #define P4EST_DEVICE_QUADRANT_LEN(l) ((p4est_qcoord_t) 1 << (P4EST_DEVICE_MAXLEVEL - (l)))   
+
+    /* also the number of corners */
+    #define P4EST_DEVICE_CHILDREN 4
+    /** The number of children/corners touching one face */
+    #define P4EST_DEVICE_HALF (P4EST_DEVICE_CHILDREN / 2) 
+}
 
 #endif

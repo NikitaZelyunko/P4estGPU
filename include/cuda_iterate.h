@@ -34,8 +34,7 @@
 
 #include <p4est.h>
 #include <p4est_ghost.h>
-#include "p4est_to_cuda.h"
-
+#include <p4est_to_cuda.h>
 
 SC_EXTERN_C_BEGIN;
 
@@ -164,6 +163,14 @@ cuda_iter_face_info_t;
 typedef void        (*cuda_iter_face_t) (cuda_iter_face_info_t * info,
                                           void *user_data);
 
+typedef void (*cuda_iter_face_setup_kernel_t)(cuda_iter_face_t *callback);
+
+typedef struct cuda_iter_face_api
+{
+  cuda_iter_face_t callback;
+  cuda_iter_face_setup_kernel_t setup_kernel;
+}cuda_iter_face_api_t;
+
 /** Information about one side of a corner in the forest.  If a \a quad is local
  * (\a is_ghost is false), then its \a quadid indexes the tree's quadrant array;
  * otherwise, it indexes the ghosts array. If a quadrant should be present, but
@@ -255,6 +262,7 @@ typedef void        (*cuda_iter_corner_t) (cuda_iter_corner_info_t * info,
  * \param[in] iter_corner    callback function for every corner between
  *                           quadrants
  */
+
 void                cuda_iterate (cuda4est_t * cuda4est,
                                    p4est_ghost_t * ghost_layer,
                                    void* user_data,
@@ -262,6 +270,7 @@ void                cuda_iterate (cuda4est_t * cuda4est,
                                    p4est_iter_volume_t iter_volume,
                                    cuda_iter_volume_api_t* cuda_iter_volume_api,
                                    p4est_iter_face_t iter_face,
+                                   cuda_iter_face_api_t* cuda_iter_face_api,
                                    p4est_iter_corner_t iter_corner);
 
 /** Return a pointer to a iter_corner_side array element indexed by a int.
