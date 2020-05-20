@@ -8,6 +8,8 @@
 //#include <cuda_iterate.h>
 #include <p4est_iterate.h>
 
+#include <vector>
+
 typedef struct user_data_for_cuda user_data_for_cuda_t;
 
 typedef void (*alloc_cuda_memory_t)(user_data_for_cuda_t* user_data_api);
@@ -63,12 +65,14 @@ typedef struct quad_user_data_api {
 
 typedef struct p4est_cuda_memory_allocate_info p4est_cuda_memory_allocate_info_t;
 typedef struct p4est_quadrants_to_cuda p4est_quadrants_to_cuda_t;
+typedef struct p4est_ghost_to_cuda p4est_ghost_to_cuda_t;
 
 typedef struct cuda4est {
     p4est_t *p4est;
     user_data_for_cuda_t *user_data_api;
     quad_user_data_api_t *quad_user_data_api;
     p4est_cuda_memory_allocate_info_t *p4est_memory_allocate_info;
+    p4est_ghost_to_cuda_t *ghost_to_cuda;
     p4est_quadrants_to_cuda_t *quads_to_cuda;
 } cuda4est_t;
 
@@ -164,6 +168,10 @@ struct p4est_quadrants_to_cuda
     size_t quadrants_length;
     size_t quadrants_allocated_size;
     p4est_iter_face_side_t *d_sides;
+    p4est_iter_face_side_t* h_sides;
+    size_t sides_count;
+    size_t faces_iteration_count;
+    size_t *faces_per_iter; // array faces_iteration_count length
     all_quads_user_data_allocate_info_t * all_quads_user_data_allocate_info;
 };
 
@@ -172,12 +180,14 @@ void updateQuadrants(cuda4est_t* cuda4est, p4est_quadrants_to_cuda* quads_to_cud
 void freeMemoryForQuadrants(p4est_quadrants_to_cuda* quads_to_cuda, quad_user_data_api_t *user_data_api);
 void downloadQuadrantsFromCuda(p4est_quadrants_to_cuda* quads_to_cuda, sc_array_t* quadrants, quad_user_data_api_t *user_data_api);
 
+p4est_iter_face_side_t* copy_iter_face_side(p4est_iter_face_side_t* source_face_side);
+
 typedef struct p4est_faces_to_cuda
 {
     p4est_iter_face_side_t* d_faces;
 }p4est_faces_to_cuda_t;
 
-typedef struct p4est_ghost_to_cuda
+struct p4est_ghost_to_cuda
 {
     p4est_ghost_t *d_ghost_layer;
 
@@ -190,8 +200,7 @@ typedef struct p4est_ghost_to_cuda
     p4est_locidx_t *d_proc_offsets_temp;
     size_t d_proc_offsets_temp_size;
 
-}
-p4est_ghost_to_cuda_t;
+};
 
 p4est_ghost_to_cuda_t* mallocForGhost(p4est_t* p4est, p4est_ghost_t* ghost_layer);
 void freeMemoryForGhost(p4est_ghost_to_cuda_t* ghost_to_cuda);

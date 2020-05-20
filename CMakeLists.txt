@@ -30,6 +30,7 @@ add_executable(P4estGpu
         ${MAIN_INCLUDE}/p4est_to_cuda.h
         ${MAIN_INCLUDE}/cuda_iterate_loop_args.h
 
+        ${MAIN_SRC}/simple_cuda_iterate.cpp
         ${MAIN_SRC}/simple_cuda_iterate.cu
         ${MAIN_SRC}/main.cu
 )

@@ -160,8 +160,11 @@ cuda_iter_face_info_t;
  * \note the forest must be face balanced for p4est_iterate() to execute a
  * callback function on faces (see p4est_balance()).
  */
-typedef void        (*cuda_iter_face_t) (cuda_iter_face_info_t * info,
-                                          void *user_data);
+typedef void        (*cuda_iter_face_t) (
+  p4est_t* p4est,
+  p4est_ghost_t* ghost_layer,
+  p4est_iter_face_side_t* faces,
+  void *user_data);
 
 typedef void (*cuda_iter_face_setup_kernel_t)(cuda_iter_face_t *callback);
 

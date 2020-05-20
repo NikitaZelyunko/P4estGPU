@@ -2599,6 +2599,14 @@ p4est_volume_iterate_simple (p4est_t * p4est, p4est_ghost_t * ghost_layer,
    simple_volume_cuda_iterate(cuda4est, ghost_layer, user_data_volume_cuda_api, iter_volume_api);
  }
 
+ static void
+ cuda_face_iterate_simple (cuda4est_t * cuda4est, p4est_ghost_t * ghost_layer,
+                              user_data_for_cuda_t *user_data_volume_cuda_api, 
+                              cuda_iter_face_api_t* iter_face_api)
+ {
+   simple_face_cuda_iterate(cuda4est, ghost_layer, user_data_volume_cuda_api, iter_face_api);
+ }
+
 
 static void
 cuda_volume_iterate (p4est_iter_volume_args_t * args, void *user_data,
@@ -3303,6 +3311,13 @@ cuda_iterate_ext (cuda4est_t * cuda4est, p4est_ghost_t * Ghost_layer,
     return;
   }
 
+  if(cuda_iter_face_api != NULL) {
+    if(cuda_iter_volume_api != NULL) {
+      cuda_volume_iterate_simple(cuda4est, ghost_layer, user_data_volume_cuda_api, cuda_iter_volume_api);
+    }
+    cuda_face_iterate_simple(cuda4est, ghost_layer, user_data_volume_cuda_api, cuda_iter_face_api);
+  }
+
   /** initialize arrays that keep track of where we are in the search */
   loop_args = cuda_iter_loop_args_new (conn,
 #ifdef P4_TO_P8
@@ -3330,11 +3345,11 @@ cuda_iterate_ext (cuda4est_t * cuda4est, p4est_ghost_t * Ghost_layer,
     if (t >= first_local_tree && t <= last_local_tree) {
       cuda_iter_init_volume (&args, p4est, ghost_layer, loop_args, t);
 
-      cuda_volume_iterate (&args, user_data, user_data_volume_cuda_api, cuda_iter_volume_api, iter_volume, cuda_iter_face_api, iter_face,
-#ifdef P4_TO_P8
-                            iter_edge,
-#endif
-                            iter_corner);
+      //cuda_volume_iterate (&args, user_data, user_data_volume_cuda_api, cuda_iter_volume_api, iter_volume, cuda_iter_face_api, iter_face,
+//#ifdef P4_TO_P8
+//                            iter_edge,
+//#endif
+//                            iter_corner);
 
       cuda_iter_reset_volume (&args);
     }

@@ -87,19 +87,26 @@ void updateQuadrants(cuda4est_t* cuda4est, p4est_quadrants_to_cuda* quads_to_cud
 }
 
 void freeMemoryForQuadrants(p4est_quadrants_to_cuda_t* quads_to_cuda, quad_user_data_api_t *user_data_api) {
-    freeMemoryForFacesSides(quads_to_cuda);
-    user_data_api->free_cuda_memory_for_all_quads(quads_to_cuda->all_quads_user_data_allocate_info);
-    free(quads_to_cuda->all_quads_user_data_allocate_info);
-    gpuErrchk(cudaFree(quads_to_cuda->d_quadrants_array_temp));
-    gpuErrchk(cudaFree(quads_to_cuda->d_quadrants));
+  freeMemoryForFacesSides(quads_to_cuda);
+  user_data_api->free_cuda_memory_for_all_quads(quads_to_cuda->all_quads_user_data_allocate_info);
+  free(quads_to_cuda->all_quads_user_data_allocate_info);
+  gpuErrchk(cudaFree(quads_to_cuda->d_quadrants_array_temp));
+  gpuErrchk(cudaFree(quads_to_cuda->d_quadrants));
 }
 
 void downloadQuadrantsFromCuda(p4est_quadrants_to_cuda* quads_to_cuda, sc_array_t* quadrants, quad_user_data_api_t *user_data_api) {
-    user_data_api->download_all_quads_cuda_user_data_to_host(quads_to_cuda->all_quads_user_data_allocate_info, quadrants);
+  user_data_api->download_all_quads_cuda_user_data_to_host(quads_to_cuda->all_quads_user_data_allocate_info, quadrants);
+}
+
+p4est_iter_face_side_t* copy_iter_face_side(p4est_iter_face_side_t* source_face_side) {
+  size_t face_bytes_size = sizeof(p4est_iter_face_side_t);
+  p4est_iter_face_side_t* face_side = (p4est_iter_face_side_t*)malloc(face_bytes_size);
+  memcpy(face_side, source_face_side, face_bytes_size);
+  return face_side;
 }
 
 static void
-p4est_face_iterate_without_callbacks (p4est_iter_face_args_t * args)
+p4est_face_iterate_without_callbacks (p4est_iter_face_args_t * args, std::vector<p4est_iter_face_side_t*>* all_faces)
 {
 
   const int           left = 0;
@@ -300,6 +307,9 @@ p4est_face_iterate_without_callbacks (p4est_iter_face_args_t * args)
     }
     if (stop_refine) {
       if (has_local) {
+        for (side = left; side <= limit; side++) {
+          all_faces->push_back(copy_iter_face_side(cuda_iter_fside_array_index_int (&info->sides, side)));
+        }
         //iter_face (info, user_data);
       }
     }
@@ -389,7 +399,7 @@ p4est_face_iterate_without_callbacks (p4est_iter_face_args_t * args)
 }
 
 static void
-cuda_volume_iterate_without_callbacks (p4est_iter_volume_args_t * args)
+cuda_volume_iterate_without_callbacks (p4est_iter_volume_args_t * args, std::vector<p4est_iter_face_side_t*>* all_faces)
 {
   const int           local = 0;
   const int           ghost = 1;
@@ -506,7 +516,7 @@ cuda_volume_iterate_without_callbacks (p4est_iter_volume_args_t * args)
             cuda_iter_copy_indices (loop_args,
                                      args->face_args[dir][side].start_idx2,
                                      1, 2);
-            p4est_face_iterate_without_callbacks (&(args->face_args[dir][side]));
+            p4est_face_iterate_without_callbacks (&(args->face_args[dir][side]), all_faces);
           }
         }
 #ifdef P4_TO_P8
@@ -554,6 +564,7 @@ cuda_volume_iterate_without_callbacks (p4est_iter_volume_args_t * args)
 }
 
 void mallocFacesSides(cuda4est_t* cuda4est, sc_array_t* quadrants, p4est_quadrants_to_cuda* quads_to_cuda, p4est_ghost_t* Ghost_layer, p4est_ghost_to_cuda_t* ghost_to_cuda) {
+  std::vector<p4est_iter_face_side_t*> all_faces;
   int remote = 0;
   p4est_t *p4est = cuda4est->p4est;
   int                 f, c;
@@ -624,7 +635,7 @@ void mallocFacesSides(cuda4est_t* cuda4est, sc_array_t* quadrants, p4est_quadran
     if (t >= first_local_tree && t <= last_local_tree) {
       cuda_iter_init_volume (&args, p4est, ghost_layer, loop_args, t);
 
-      cuda_volume_iterate_without_callbacks (&args);
+      cuda_volume_iterate_without_callbacks (&args, &all_faces);
 
       cuda_iter_reset_volume (&args);
     }
@@ -634,13 +645,157 @@ void mallocFacesSides(cuda4est_t* cuda4est, sc_array_t* quadrants, p4est_quadran
     P4EST_FREE (empty_ghost_layer.tree_offsets);
     P4EST_FREE (empty_ghost_layer.proc_offsets);
   }
-
   P4EST_FREE (owned);
   cuda_iter_loop_args_destroy (loop_args);
+
+  size_t quads_length = quads_to_cuda->quadrants_length;
+  int8_t *quad_is_used = (int8_t*)malloc(sizeof(int8_t) * quads_length);
+  std::vector<p4est_iter_face_side_t*>::iterator faces_iter = all_faces.end();
+  std::vector<std::vector<p4est_iter_face_side_t*>* > iterations_to_faces;
+  size_t faces_count = all_faces.size();
+  quads_to_cuda->sides_count = faces_count;
+
+  std::vector<std::vector<p4est_iter_face_side_t*>* >::iterator iteration_faces_iter = iterations_to_faces.begin();
+  for(;;) {
+    if(faces_iter == all_faces.end()) {
+      size_t faces_size = all_faces.size();
+      if(!all_faces.size()){
+        break;
+      }
+      faces_iter = all_faces.begin();
+      std::vector<p4est_iter_face_side_t*> *new_iteration = new std::vector<p4est_iter_face_side_t*>();
+      iterations_to_faces.push_back(new_iteration);
+      iteration_faces_iter = iterations_to_faces.end();
+      iteration_faces_iter--;
+      for(size_t i = 0; i < quads_length; i++){
+        quad_is_used[i] = 0;
+      }
+    }
+    p4est_iter_face_side_t *left = *faces_iter;
+    faces_iter++;
+    p4est_iter_face_side_t *right = *faces_iter;
+    faces_iter++;
+    bool faces_iter_end_test = faces_iter == all_faces.end();
+    if(faces_iter_end_test) {
+      faces_iter_end_test = true;
+    }
+    if(left->is_hanging) {
+      p4est_locidx_t *left_quads = left->is.hanging.quadid;
+      if(right->is_hanging) {
+        p4est_locidx_t *right_quads = right->is.hanging.quadid;
+        int8_t facesIsUnused = 1;
+        for(size_t i = 0; i < P4EST_HALF; i++) {
+          if(quad_is_used[left_quads[i]]) {
+            facesIsUnused = 0;
+            break;
+          }
+        }
+        if(facesIsUnused) {
+          for(size_t i = 0; i < P4EST_HALF; i++) {
+            if(quad_is_used[right_quads[i]]) {
+              facesIsUnused = 0;
+              break;
+            }
+          }
+        }
+        if(facesIsUnused) {
+          for(size_t i = 0; i < P4EST_HALF; i++) {
+            quad_is_used[left_quads[i]] = quad_is_used[right_quads[i]] = 1;
+          }
+          (*iteration_faces_iter)->push_back(left);
+          (*iteration_faces_iter)->push_back(right);
+          faces_iter = all_faces.erase(--faces_iter);
+          faces_iter = all_faces.erase(--faces_iter);
+        }
+      } else {
+        p4est_locidx_t right_quad = right->is.full.quadid;
+        int8_t facesIsUnused = !quad_is_used[right_quad];
+        if(facesIsUnused) {
+          for(size_t i = 0; i < P4EST_HALF; i++) {
+            if(quad_is_used[left_quads[i]]) {
+              facesIsUnused = 0;
+              break;
+            }
+          }
+          if(facesIsUnused) {
+            quad_is_used[right_quad] = 1;
+            (*iteration_faces_iter)->push_back(left);
+            for(size_t i = 0; i < P4EST_HALF; i++) {
+              quad_is_used[left_quads[i]] = 1;
+            }
+            (*iteration_faces_iter)->push_back(right);
+            faces_iter = all_faces.erase(--faces_iter);
+            faces_iter = all_faces.erase(--faces_iter);
+          }
+        }
+      }
+    } else {
+      p4est_locidx_t left_quad = left->is.full.quadid;
+      if(right->is_hanging) {
+        p4est_locidx_t *right_quads = right->is.hanging.quadid;
+        int8_t facesIsUnused = !quad_is_used[left_quad];
+        if(facesIsUnused) {
+          for(size_t i = 0; i < P4EST_HALF; i++) {
+            if(quad_is_used[right_quads[i]]) {
+              facesIsUnused = 0;
+              break;
+            }
+          }
+          if(facesIsUnused) {
+            quad_is_used[left_quad] = 1;
+            (*iteration_faces_iter)->push_back(left);
+            for(size_t i = 0; i < P4EST_HALF; i++) {
+              quad_is_used[right_quads[i]] = 1;
+            }
+            (*iteration_faces_iter)->push_back(right);
+            faces_iter = all_faces.erase(--faces_iter);
+            faces_iter = all_faces.erase(--faces_iter);
+          }
+        }
+      } else {
+        p4est_locidx_t right_quad = right->is.full.quadid;
+        if(!quad_is_used[right_quad] && ! quad_is_used[left_quad]) {
+          bool faces_iter_end = faces_iter == all_faces.end();
+          size_t facess_size = all_faces.size();
+          quad_is_used[right_quad] = quad_is_used[left_quad] = 1;
+          (*iteration_faces_iter)->push_back(left);
+          (*iteration_faces_iter)->push_back(right);
+          faces_iter = all_faces.erase(--faces_iter);
+          faces_iter = all_faces.erase(--faces_iter);
+        }
+      }
+    } 
+  }
+
+  free(quad_is_used);
+
+
+  quads_to_cuda->faces_iteration_count = iterations_to_faces.size();
+  size_t *faces_per_iter = (size_t*)malloc(sizeof(size_t) * quads_to_cuda->faces_iteration_count);
+  size_t *faces_per_iter_cursor = faces_per_iter;
+  size_t face_size = sizeof(p4est_iter_face_side_t);
+  size_t faces_bytes_alloc = faces_count * face_size;
+  p4est_iter_face_side_t* sides_arr = (p4est_iter_face_side_t*)malloc(faces_bytes_alloc);
+  p4est_iter_face_side_t* cursor = sides_arr;
+  for(std::vector<std::vector<p4est_iter_face_side_t*>* >::iterator iteration_i = iterations_to_faces.begin(); iteration_i != iterations_to_faces.end(); iteration_i++, faces_per_iter_cursor++) {
+    *faces_per_iter_cursor = (*iteration_i)->size();
+    for(std::vector<p4est_iter_face_side_t*>::iterator face_i = (*iteration_i)->begin(); face_i != (*iteration_i)->end(); face_i++, cursor++) {
+      memcpy(cursor, *face_i, face_size);
+    }
+    delete *iteration_i;
+  }
+  quads_to_cuda->faces_per_iter = faces_per_iter;
+
+  quads_to_cuda->h_sides = sides_arr;
+  p4est_iter_face_side_t* d_faces;
+  gpuErrchk(cudaMalloc((void**)&d_faces, faces_bytes_alloc));
+  gpuErrchk(cudaMemcpy(d_faces, sides_arr, faces_bytes_alloc, cudaMemcpyHostToDevice));
+  quads_to_cuda->d_sides = d_faces;
 }
 
 void freeMemoryForFacesSides(p4est_quadrants_to_cuda* quads_to_cuda) {
-
+  gpuErrchk(cudaFree(quads_to_cuda->d_sides));
+  free(quads_to_cuda->h_sides);
 }
 
 p4est_ghost_to_cuda_t* mallocForGhost(p4est_t* p4est, p4est_ghost_t* ghost_layer) {
@@ -683,10 +838,18 @@ p4est_ghost_to_cuda_t* mallocForGhost(p4est_t* p4est, p4est_ghost_t* ghost_layer
 }
 
 void freeMemoryForGhost(p4est_ghost_to_cuda_t* ghost_to_cuda) {
+  if(ghost_to_cuda->d_ghosts_array_temp) {
     gpuErrchk(cudaFree(ghost_to_cuda->d_ghosts_array_temp));
+  }
+  if(ghost_to_cuda->d_tree_offsets_temp) {
     gpuErrchk(cudaFree(ghost_to_cuda->d_tree_offsets_temp));
+  }
+  if(ghost_to_cuda->d_proc_offsets_temp) {
     gpuErrchk(cudaFree(ghost_to_cuda->d_proc_offsets_temp));
+  }
+  if(ghost_to_cuda->d_ghost_layer) {
     gpuErrchk(cudaFree(ghost_to_cuda->d_ghost_layer));
+  }
 }
 
 
