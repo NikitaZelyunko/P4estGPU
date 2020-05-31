@@ -587,7 +587,6 @@ void mallocFacesSides(cuda4est_t* cuda4est, sc_array_t* quadrants, p4est_quadran
   p4est_topidx_t      last_run_tree;
   int32_t            *owned;
   int32_t             mask, touch;
-
   p4est_tree_t* first_tree = p4est_tree_array_index(p4est->trees, first_local_tree);
 
   P4EST_ASSERT (p4est_is_valid (p4est));
@@ -650,6 +649,8 @@ void mallocFacesSides(cuda4est_t* cuda4est, sc_array_t* quadrants, p4est_quadran
 
   size_t quads_length = quads_to_cuda->quadrants_length;
   int8_t *quad_is_used = (int8_t*)malloc(sizeof(int8_t) * quads_length);
+  int8_t *ghost_quad_is_used = (int8_t*)malloc(sizeof(int8_t) * (ghost_layer->ghosts.elem_count + 1));
+  ghost_quad_is_used++;
   std::vector<p4est_iter_face_side_t*>::iterator faces_iter = all_faces.end();
   std::vector<std::vector<p4est_iter_face_side_t*>* > iterations_to_faces;
   size_t faces_count = all_faces.size();
@@ -670,29 +671,40 @@ void mallocFacesSides(cuda4est_t* cuda4est, sc_array_t* quadrants, p4est_quadran
       for(size_t i = 0; i < quads_length; i++){
         quad_is_used[i] = 0;
       }
+      ghost_quad_is_used[-1] = 0;
+      for(size_t i = 0; i < ghost_layer->ghosts.elem_count; i++) {
+        ghost_quad_is_used[i] = 0;
+      }
     }
     p4est_iter_face_side_t *left = *faces_iter;
     faces_iter++;
     p4est_iter_face_side_t *right = *faces_iter;
     faces_iter++;
-    bool faces_iter_end_test = faces_iter == all_faces.end();
-    if(faces_iter_end_test) {
-      faces_iter_end_test = true;
-    }
+
     if(left->is_hanging) {
       p4est_locidx_t *left_quads = left->is.hanging.quadid;
       if(right->is_hanging) {
         p4est_locidx_t *right_quads = right->is.hanging.quadid;
         int8_t facesIsUnused = 1;
         for(size_t i = 0; i < P4EST_HALF; i++) {
-          if(quad_is_used[left_quads[i]]) {
+          if(left->is.hanging.is_ghost[i]) {
+            if(ghost_quad_is_used[left_quads[i]]) {
+              facesIsUnused = 0;
+              break;
+            }
+          } else if(quad_is_used[left_quads[i]]) {
             facesIsUnused = 0;
             break;
           }
         }
         if(facesIsUnused) {
           for(size_t i = 0; i < P4EST_HALF; i++) {
-            if(quad_is_used[right_quads[i]]) {
+            if(right->is.hanging.is_ghost[i]) {
+              if(ghost_quad_is_used[right_quads[i]]) {
+                facesIsUnused = 0;
+                break;
+              }
+            } else if(quad_is_used[right_quads[i]]) {
               facesIsUnused = 0;
               break;
             }
@@ -700,7 +712,16 @@ void mallocFacesSides(cuda4est_t* cuda4est, sc_array_t* quadrants, p4est_quadran
         }
         if(facesIsUnused) {
           for(size_t i = 0; i < P4EST_HALF; i++) {
-            quad_is_used[left_quads[i]] = quad_is_used[right_quads[i]] = 1;
+            if(right->is.hanging.is_ghost[i]) {
+              ghost_quad_is_used[right_quads[i]] = 1;
+            } else {
+              quad_is_used[right_quads[i]] = 1;
+            }
+            if(left->is.hanging.is_ghost[i]) {
+              ghost_quad_is_used[left_quads[i]] = 1;
+            } else {
+              quad_is_used[left_quads[i]] = 1;
+            }
           }
           (*iteration_faces_iter)->push_back(left);
           (*iteration_faces_iter)->push_back(right);
@@ -709,19 +730,32 @@ void mallocFacesSides(cuda4est_t* cuda4est, sc_array_t* quadrants, p4est_quadran
         }
       } else {
         p4est_locidx_t right_quad = right->is.full.quadid;
-        int8_t facesIsUnused = !quad_is_used[right_quad];
+        int8_t facesIsUnused = right->is.full.is_ghost ? !ghost_quad_is_used[right_quad] : !quad_is_used[right_quad];
         if(facesIsUnused) {
           for(size_t i = 0; i < P4EST_HALF; i++) {
-            if(quad_is_used[left_quads[i]]) {
+            if(left->is.hanging.is_ghost[i]) {
+              if(ghost_quad_is_used[left_quads[i]]) {
+                facesIsUnused = 0;
+                break;
+              }
+            } else if(quad_is_used[left_quads[i]]) {
               facesIsUnused = 0;
               break;
             }
           }
           if(facesIsUnused) {
-            quad_is_used[right_quad] = 1;
+            if(right->is.full.is_ghost) {
+              ghost_quad_is_used[right_quad] = 1;
+            } else {
+              quad_is_used[right_quad] = 1;
+            }
             (*iteration_faces_iter)->push_back(left);
             for(size_t i = 0; i < P4EST_HALF; i++) {
-              quad_is_used[left_quads[i]] = 1;
+              if(left->is.hanging.is_ghost[i]) {
+                ghost_quad_is_used[left_quads[i]] = 1;
+              } else {
+                quad_is_used[left_quads[i]] = 1;
+              }
             }
             (*iteration_faces_iter)->push_back(right);
             faces_iter = all_faces.erase(--faces_iter);
@@ -733,19 +767,32 @@ void mallocFacesSides(cuda4est_t* cuda4est, sc_array_t* quadrants, p4est_quadran
       p4est_locidx_t left_quad = left->is.full.quadid;
       if(right->is_hanging) {
         p4est_locidx_t *right_quads = right->is.hanging.quadid;
-        int8_t facesIsUnused = !quad_is_used[left_quad];
+        int8_t facesIsUnused = left->is.full.is_ghost ? !ghost_quad_is_used[left_quad] : !quad_is_used[left_quad];
         if(facesIsUnused) {
           for(size_t i = 0; i < P4EST_HALF; i++) {
-            if(quad_is_used[right_quads[i]]) {
+            if(right->is.hanging.is_ghost[i]) {
+              if(ghost_quad_is_used[right_quads[i]]) {
+                facesIsUnused = 0;
+                break;
+              }
+            } else if(quad_is_used[right_quads[i]]) {
               facesIsUnused = 0;
               break;
             }
           }
           if(facesIsUnused) {
-            quad_is_used[left_quad] = 1;
+            if(left->is.full.is_ghost) {
+              ghost_quad_is_used[left_quad] = 1;
+            } else {
+              quad_is_used[left_quad] = 1;
+            }
             (*iteration_faces_iter)->push_back(left);
             for(size_t i = 0; i < P4EST_HALF; i++) {
-              quad_is_used[right_quads[i]] = 1;
+              if(right->is.hanging.is_ghost[i]) {
+                ghost_quad_is_used[right_quads[i]] = 1;
+              } else {
+                quad_is_used[right_quads[i]] = 1;
+              }
             }
             (*iteration_faces_iter)->push_back(right);
             faces_iter = all_faces.erase(--faces_iter);
@@ -754,10 +801,19 @@ void mallocFacesSides(cuda4est_t* cuda4est, sc_array_t* quadrants, p4est_quadran
         }
       } else {
         p4est_locidx_t right_quad = right->is.full.quadid;
-        if(!quad_is_used[right_quad] && ! quad_is_used[left_quad]) {
-          bool faces_iter_end = faces_iter == all_faces.end();
-          size_t facess_size = all_faces.size();
-          quad_is_used[right_quad] = quad_is_used[left_quad] = 1;
+        int8_t facesIsUnused = (right->is.full.is_ghost ? !ghost_quad_is_used[right_quad] : !quad_is_used[right_quad]) &&
+        (left->is.full.is_ghost ? !ghost_quad_is_used[left_quad] : !quad_is_used[left_quad]);
+        if(facesIsUnused) {
+          if(left->is.full.is_ghost) {
+            ghost_quad_is_used[left_quad] = 1;
+          } else {
+            quad_is_used[left_quad] = 1;
+          }
+          if(right->is.full.is_ghost) {
+            ghost_quad_is_used[right_quad] = 1;
+          } else {
+            quad_is_used[right_quad] = 1;
+          }
           (*iteration_faces_iter)->push_back(left);
           (*iteration_faces_iter)->push_back(right);
           faces_iter = all_faces.erase(--faces_iter);
@@ -768,8 +824,7 @@ void mallocFacesSides(cuda4est_t* cuda4est, sc_array_t* quadrants, p4est_quadran
   }
 
   free(quad_is_used);
-
-
+  free(--ghost_quad_is_used);
   quads_to_cuda->faces_iteration_count = iterations_to_faces.size();
   size_t *faces_per_iter = (size_t*)malloc(sizeof(size_t) * quads_to_cuda->faces_iteration_count);
   size_t *faces_per_iter_cursor = faces_per_iter;

@@ -18,9 +18,6 @@ void simple_volume_cuda_iterate(
     sc_array_t         *quadrants;
     cuda_iter_volume_info_t info;
 
-    // ghost_layer memory allocation start
-    p4est_ghost_to_cuda_t *ghost_to_cuda = mallocForGhost(p4est, ghost_layer);
-    // ghost_layer memory allocation end
 
     info.p4est = p4est;
     info.ghost_layer = ghost_layer;
@@ -29,9 +26,6 @@ void simple_volume_cuda_iterate(
         info.treeid = t;
         n_quads = cuda4est->quads_to_cuda->quadrants_length;
 
-        // quadrants memory allocation start
-        // p4est_quadrants_to_cuda_t *quads_to_cuda = mallocForQuadrants(quadrants, cuda4est->quad_user_data_api);
-        // quadrants memory allocation end
         user_data_volume_cuda_api->alloc_cuda_memory(user_data_volume_cuda_api);
         void *d_user_data = user_data_volume_cuda_api->get_cuda_allocated_user_data(user_data_volume_cuda_api);
 
@@ -48,9 +42,9 @@ void simple_volume_cuda_iterate(
         // calculate init cuda dimensions
         
         unsigned long long *d_callback, h_callback;
-        cudaMalloc((void**)&d_callback, sizeof(unsigned long long));
+        gpuErrchk(cudaMalloc((void**)&d_callback, sizeof(unsigned long long)));
         run_setup_kernel_volume_callback(iter_volume_api, (cuda_iter_volume_t*)d_callback);
-        cudaMemcpy(&h_callback, d_callback, sizeof(unsigned long long), cudaMemcpyDeviceToHost);
+        gpuErrchk(cudaMemcpy(&h_callback, d_callback, sizeof(unsigned long long), cudaMemcpyDeviceToHost));
 
         run_simple_quadrants_iterate(
           cuda4est->quads_to_cuda->d_quadrants, cuda4est->ghost_to_cuda->d_ghost_layer,
@@ -59,6 +53,7 @@ void simple_volume_cuda_iterate(
           n_quads, min_quadrants_per_thread,
           needed_block_count, threads_per_block
         );
+        gpuErrchk(cudaDeviceSynchronize());
         user_data_volume_cuda_api->copy_user_data_from_device(user_data_volume_cuda_api);
         user_data_volume_cuda_api->free_cuda_memory(user_data_volume_cuda_api);
     }
@@ -79,9 +74,6 @@ void simple_face_cuda_iterate(
     sc_array_t         *quadrants;
     cuda_iter_volume_info_t info;
 
-    // ghost_layer memory allocation start
-    // p4est_ghost_to_cuda_t *ghost_to_cuda = mallocForGhost(p4est, ghost_layer);
-    // ghost_layer memory allocation end
 
     info.p4est = p4est;
     info.ghost_layer = ghost_layer;
@@ -91,9 +83,6 @@ void simple_face_cuda_iterate(
     size_t faces_per_iter = P4EST_CHILDREN / 2;
     size_t iter_count = faces_count / faces_per_iter;
 
-    // quadrants memory allocation start
-    // p4est_quadrants_to_cuda_t *quads_to_cuda = mallocForQuadrants(quadrants, cuda4est->quad_user_data_api);
-    // quadrants memory allocation end
     user_data_volume_cuda_api->alloc_cuda_memory(user_data_volume_cuda_api);
     void *d_user_data = user_data_volume_cuda_api->get_cuda_allocated_user_data(user_data_volume_cuda_api);
 
@@ -104,12 +93,12 @@ void simple_face_cuda_iterate(
     size_t threads_per_block = 128;
     // constants
 
-
     
     unsigned long long *d_callback, h_callback;
-    cudaMalloc((void**)&d_callback, sizeof(unsigned long long));
+    gpuErrchk(cudaMalloc((void**)&d_callback, sizeof(unsigned long long)));
     run_setup_kernel_face_callback(iter_face_api, (cuda_iter_face_t*)d_callback);
-    cudaMemcpy(&h_callback, d_callback, sizeof(unsigned long long), cudaMemcpyDeviceToHost);
+    gpuErrchk(cudaMemcpy(&h_callback, d_callback, sizeof(unsigned long long), cudaMemcpyDeviceToHost));
+
 
     size_t iteration_count = cuda4est->quads_to_cuda->faces_iteration_count;
     size_t *faces_count_per_iter = cuda4est->quads_to_cuda->faces_per_iter;
@@ -127,7 +116,7 @@ void simple_face_cuda_iterate(
         d_user_data, (cuda_iter_face_t) h_callback,
         faces_per_iter, min_faces_per_thread, needed_block_count, threads_per_block
       );
-      cudaDeviceSynchronize();
+      gpuErrchk(cudaDeviceSynchronize());
     }
     user_data_volume_cuda_api->copy_user_data_from_device(user_data_volume_cuda_api);
     user_data_volume_cuda_api->free_cuda_memory(user_data_volume_cuda_api);
