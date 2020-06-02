@@ -80,8 +80,8 @@ typedef struct step3_timestep_update_user_data_to_cuda {
   double *d_user_data;
 }step3_timestep_update_user_data_to_cuda_t;
 
-typedef struct step3_divergence_flux_user_data_to_cuda {
+typedef struct step3_ghost_data_user_data_to_cuda_t {
   step3_data_t *d_user_data;
-}step3_divergence_flux_user_data_to_cuda_t;
+}step3_ghost_data_user_data_to_cuda_t;
 
 #endif

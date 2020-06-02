@@ -9,6 +9,10 @@
 #include <p4est_iterate.h>
 
 #include <vector>
+#include "time.h"
+#include<iostream>
+
+using namespace std;
 
 typedef struct user_data_for_cuda user_data_for_cuda_t;
 
@@ -169,6 +173,7 @@ struct p4est_quadrants_to_cuda
     size_t quadrants_allocated_size;
     p4est_iter_face_side_t *d_sides;
     p4est_iter_face_side_t* h_sides;
+    char* faces_iter_indexes;
     size_t sides_count;
     size_t faces_iteration_count;
     size_t *faces_per_iter; // array faces_iteration_count length
@@ -203,6 +208,8 @@ struct p4est_ghost_to_cuda
 };
 
 p4est_ghost_to_cuda_t* mallocForGhost(p4est_t* p4est, p4est_ghost_t* ghost_layer);
+void exchangeGhostDataToCuda(p4est_ghost_to_cuda_t* ghost_to_cuda, p4est_ghost_t* ghost_layer);
+void freeGhostDataFromCuda(p4est_ghost_to_cuda_t* ghost_to_cuda);
 void freeMemoryForGhost(p4est_ghost_to_cuda_t* ghost_to_cuda);
 
 void mallocFacesSides(cuda4est_t* cuda4est, sc_array_t* quadrants, p4est_quadrants_to_cuda* quads_to_cuda, p4est_ghost_t* Ghost_layer, p4est_ghost_to_cuda_t* ghost_to_cuda);

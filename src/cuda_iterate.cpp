@@ -1944,7 +1944,7 @@ fside_compare (const void *a, const void *b)
 #endif /* 0 */
 
 /* initialize face args for a face between trees */
-static void
+void
 cuda_iter_init_face (p4est_iter_face_args_t * args, p4est_t * p4est,
                       p4est_ghost_t * ghost_layer,
                       p4est_iter_loop_args_t * loop_args, p4est_topidx_t t,
@@ -2039,7 +2039,7 @@ cuda_iter_init_face (p4est_iter_face_args_t * args, p4est_t * p4est,
   }
 }
 
-static void
+void
 cuda_iter_reset_face (p4est_iter_face_args_t * args)
 {
   if (args->loop_args->loop_corner) {
@@ -3365,11 +3365,11 @@ cuda_iterate_ext (cuda4est_t * cuda4est, p4est_ghost_t * Ghost_layer,
         continue;
       }
       cuda_iter_init_face (&face_args, p4est, ghost_layer, loop_args, t, f);
-      p4est_face_iterate (&face_args, user_data, iter_face,
-#ifdef P4_TO_P8
-                          iter_edge,
-#endif
-                          iter_corner);
+      //p4est_face_iterate (&face_args, user_data, iter_face,
+//#ifdef P4_TO_P8
+//                          iter_edge,
+//#endif
+//                          iter_corner);
       cuda_iter_reset_face (&face_args);
     }
 

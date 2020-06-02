@@ -235,6 +235,11 @@ void
 cuda_iter_init_volume (p4est_iter_volume_args_t * args, p4est_t * p4est,
                         p4est_ghost_t * ghost_layer,
                         p4est_iter_loop_args_t * loop_args, p4est_topidx_t t);
+void
+cuda_iter_init_face (p4est_iter_face_args_t * args, p4est_t * p4est,
+                      p4est_ghost_t * ghost_layer,
+                      p4est_iter_loop_args_t * loop_args, p4est_topidx_t t,
+                      int f);
 
 sc_array_t  *
 cuda_iter_tier_rings_new (int num_procs);
@@ -259,6 +264,9 @@ cuda_iter_get_boundaries (p4est_t * p4est, p4est_topidx_t * last_run_tree,
                            int remote);
 void
 cuda_iter_reset_volume (p4est_iter_volume_args_t * args);
+
+void
+cuda_iter_reset_face (p4est_iter_face_args_t * args);
 
 void
 cuda_iter_loop_args_destroy (p4est_iter_loop_args_t * loop_args);
