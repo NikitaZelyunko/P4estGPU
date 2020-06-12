@@ -73,6 +73,7 @@ typedef void        (*cuda_iter_volume_t) (
   p4est_t            *p4est,
   p4est_ghost_t      *ghost_layer,
   p4est_quadrant_t   *quad,
+  void               *quad_data,
   p4est_locidx_t      quadid,
   p4est_topidx_t      treeid,
   void *user_data

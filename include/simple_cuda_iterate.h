@@ -26,7 +26,8 @@ extern "C" {
     void run_setup_kernel_volume_callback(cuda_iter_volume_api_t* iter_volume_api, cuda_iter_volume_t* d_callback);
     void run_setup_kernel_face_callback(cuda_iter_face_api_t* iter_face_api, cuda_iter_face_t* d_callback);
 
-    void run_simple_quadrants_iterate(sc_array_t* quadrants, p4est_ghost_t* ghost_layer,
+    void run_simple_quadrants_iterate(p4est_quadrant_t* quadrants, void* quads_data, size_t quad_data_size,
+        p4est_ghost_t* ghost_layer,
         p4est_t* p4est, p4est_topidx_t treeId, 
         void* user_data, cuda_iter_volume_t iter_volume,
         size_t quads_count, size_t quads_per_thread,

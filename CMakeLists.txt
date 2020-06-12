@@ -27,6 +27,7 @@ set_source_files_properties(${MAIN_SRC}/main.cu ${MAIN_SRC}/simple_cuda_iterate.
 add_executable(P4estGpu
         ${MAIN_SRC}/cuda_iterate.cpp 
         ${MAIN_SRC}/p4est_to_cuda.cpp
+        ${MAIN_SRC}/overlap_quads_generate.cpp
         ${MAIN_INCLUDE}/p4est_to_cuda.h
         ${MAIN_INCLUDE}/cuda_iterate_loop_args.h
 

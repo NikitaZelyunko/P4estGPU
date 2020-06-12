@@ -7,6 +7,7 @@
 #include <p4est_extended.h>
 //#include <cuda_iterate.h>
 #include <p4est_iterate.h>
+#include "overlap_quads_generate.h"
 
 #include <vector>
 #include "time.h"
@@ -165,6 +166,28 @@ inline void cuda_quadrants_memory_free(array_allocation_cuda_info_t* allocation_
     gpuErrchk(cudaFree(allocation_info->d_quadrants));
 }
 
+typedef struct cuda_light_face_side
+{
+  p4est_topidx_t      treeid;          
+  unsigned char       face;            
+  unsigned char       is_hanging;
+  union cuda_light_face_side_data
+  {
+    struct
+    {
+      unsigned char quadid;
+    }
+    full;
+    struct
+    {
+      unsigned char quadid[2];
+    }
+    hanging;
+  }
+  is;
+}
+cuda_light_face_side_t;
+
 struct p4est_quadrants_to_cuda
 {
     sc_array_t *d_quadrants;
@@ -214,6 +237,9 @@ void freeMemoryForGhost(p4est_ghost_to_cuda_t* ghost_to_cuda);
 
 void mallocFacesSides(cuda4est_t* cuda4est, sc_array_t* quadrants, p4est_quadrants_to_cuda* quads_to_cuda, p4est_ghost_t* Ghost_layer, p4est_ghost_to_cuda_t* ghost_to_cuda);
 void freeMemoryForFacesSides(p4est_quadrants_to_cuda* quads_to_cuda);
+
+void mallocQuadrantsBlocks(cuda4est_t* cuda4est, sc_array_t* quadrants, p4est_quadrants_to_cuda* quads_to_cuda, p4est_ghost_t* Ghost_layer, p4est_ghost_to_cuda_t* ghost_to_cuda);
+void freeMemoryForQuadrantsBlocks(p4est_quadrants_to_cuda* quads_to_cuda);
 
 typedef struct sc_array_cuda_memory_allocate_info {
     sc_array_t *d_sc_arr;
@@ -470,6 +496,23 @@ extern "C" {
     #define P4EST_DEVICE_CHILDREN 4
     /** The number of children/corners touching one face */
     #define P4EST_DEVICE_HALF (P4EST_DEVICE_CHILDREN / 2) 
+
+    /** The spatial dimension */
+    #define P4EST_DEVICE_DIM 2
+
+    /** Returns a pointer to an array element.
+     * \param [in] array Valid array.
+     * \param [in] index needs to be in [0]..[elem_count-1].
+     * \return           Pointer to the indexed array element.
+     */
+    /*@unused@*/
+    __forceinline__ __device__ void *
+    sc_device_array_index (sc_array_t * array, size_t iz)
+    {
+    SC_ASSERT (iz < array->elem_count);
+
+    return (void *) (array->array + array->elem_size * iz);
+    }
 }
 
 #endif

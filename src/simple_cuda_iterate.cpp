@@ -47,7 +47,9 @@ void simple_volume_cuda_iterate(
         gpuErrchk(cudaMemcpy(&h_callback, d_callback, sizeof(unsigned long long), cudaMemcpyDeviceToHost));
 
         run_simple_quadrants_iterate(
-          cuda4est->quads_to_cuda->d_quadrants, cuda4est->ghost_to_cuda->d_ghost_layer,
+          cuda4est->quads_to_cuda->d_quadrants_array_temp, (void*)cuda4est->quads_to_cuda->all_quads_user_data_allocate_info->d_all_quads_user_data,
+          cuda4est->p4est->data_size, 
+          cuda4est->ghost_to_cuda->d_ghost_layer,
           cuda4est->p4est_memory_allocate_info->d_p4est, t,
           d_user_data, (cuda_iter_volume_t) h_callback,
           n_quads, min_quadrants_per_thread,
@@ -102,6 +104,7 @@ void simple_face_cuda_iterate(
 
     size_t iteration_count = cuda4est->quads_to_cuda->faces_iteration_count;
     size_t *faces_count_per_iter = cuda4est->quads_to_cuda->faces_per_iter;
+
 
     for(size_t i = 0, start_index = 0; i < iteration_count; start_index+=faces_count_per_iter[i], i++) {
       size_t iter_faces_count = faces_count_per_iter[i] / 2;
