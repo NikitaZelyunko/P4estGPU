@@ -44,7 +44,7 @@
 using namespace std; 
 using namespace std::chrono; 
 
-const double difficulty = 10;
+const double difficulty = 1;
 
  /** We had 1. / 0. here to create a NaN but that is not portable. */
  static const double step3_invalid = -1.;
@@ -1508,6 +1508,112 @@ __global__ void setup_step3_cuda_upwind_flux_kernel(cuda_iter_face_t *callback) 
   *callback = step3_cuda_upwind_flux;
 }
 
+
+__device__ void
+ step3_new_cuda_upwind_flux (
+  p4est_t* p4est,
+  size_t output_quads_count,
+  char* block_user_data,
+  unsigned char* block_quad_levels,
+  cuda_light_face_side_t* sides)
+ {
+  step3_data_t *quads_user_data = (step3_data_t *)block_user_data;
+   int                 i, j;
+   step3_ctx_t        *ctx = (step3_ctx_t *) p4est->user_pointer;
+   step3_data_t       *udata;
+   unsigned char       quadid;
+   double              vdotn = 0.;
+   double              uavg;
+   double              q;
+   double              h, facearea;
+   int                 which_face;
+   int                 upwindside;
+ 
+
+   which_face = sides[0].face;
+ 
+   switch (which_face) {
+   case 0:                      /* -x side */
+     vdotn = -ctx->v[0];
+     break;
+   case 1:                      /* +x side */
+     vdotn = ctx->v[0];
+     break;
+   case 2:                      /* -y side */
+     vdotn = -ctx->v[1];
+     break;
+   case 3:                      /* +y side */
+     vdotn = ctx->v[1];
+     break;
+ #ifdef P4_TO_P8
+   case 4:                      /* -z side */
+     vdotn = -ctx->v[2];
+     break;
+   case 5:                      /* +z side */
+     vdotn = ctx->v[2];
+     break;
+ #endif
+   }
+   upwindside = vdotn >= 0. ? 0 : 1;
+ 
+   /* Because we have non-conforming boundaries, one side of an interface can
+    * either have one large ("full") quadrant or 2^(d-1) small ("hanging")
+    * quadrants: we have to compute the average differently in each case.  The
+    * info populated by p4est_iterate() gives us the context we need to
+    * proceed. */
+   uavg = 0;
+   if (sides[upwindside].is_hanging) {
+     /* there are 2^(d-1) (P4EST_HALF) subfaces */
+     for (j = 0; j < P4EST_DEVICE_HALF; j++) {
+        udata = (step3_data_t *) (quads_user_data + sides[upwindside].is.hanging.quadid[j]);
+        uavg += udata->u;
+     }
+     uavg /= P4EST_DEVICE_HALF;
+   }
+   else {
+     udata = (step3_data_t *) (quads_user_data + sides[upwindside].is.full.quadid);
+     uavg = udata->u;
+   }
+   /* flux from side 0 to side 1 */
+   q = vdotn * uavg;
+   for (i = 0; i < 2; i++) {
+     if (sides[i].is_hanging) {
+       /* there are 2^(d-1) (P4EST_HALF) subfaces */
+       for (j = 0; j < P4EST_DEVICE_HALF; j++) {
+        quadid = sides[i].is.hanging.quadid[j];
+         h =
+           (double) P4EST_DEVICE_QUADRANT_LEN (block_quad_levels[quadid]) / (double) P4EST_DEVICE_ROOT_LEN;
+ #ifndef P4_TO_P8
+         facearea = h;
+ #else
+         facearea = h * h;
+ #endif
+          udata = (step3_data_t *) (quads_user_data + quadid);
+          if (i == upwindside) {
+            udata->dudt += vdotn * udata->u * facearea * (i ? 1. : -1.);
+          }
+          else {
+            udata->dudt += q * facearea * (i ? 1. : -1.);
+          }
+       }
+     }
+     else {
+       quadid = sides[i].is.full.quadid;
+       h = (double) P4EST_DEVICE_QUADRANT_LEN (block_quad_levels[quadid]) / (double) P4EST_DEVICE_ROOT_LEN;
+ #ifndef P4_TO_P8
+       facearea = h;
+ #else
+       facearea = h * h;
+ #endif
+      udata = (step3_data_t *) (quads_user_data + quadid);
+      udata->dudt += q * facearea * (i ? 1. : -1.);
+     }
+   }
+}
+__global__ void setup_step3_cuda_new_upwind_flux_kernel(cuda_new_iter_face_t *callback) {
+  *callback = step3_new_cuda_upwind_flux;
+}
+
 void step3_timestep_update_alloc_cuda_memory(user_data_for_cuda_t* user_data_api) {
  step3_timestep_update_user_data_to_cuda_t *user_data_to_cuda = (step3_timestep_update_user_data_to_cuda_t*) malloc(sizeof(step3_timestep_update_user_data_to_cuda_t));
  double *user_data = (double*) user_data_api->user_data;
@@ -1615,6 +1721,8 @@ void step3_ghost_data_alloc_cuda_memory(user_data_for_cuda_t* user_data_api) {
  
    return dt;
  }
+
+ __device__ cuda_new_iter_face_t p_step3_new_cuda_upwind_flux = step3_new_cuda_upwind_flux;
  
  /** Timestep the advection problem.
   *
@@ -1630,9 +1738,11 @@ void step3_ghost_data_alloc_cuda_memory(user_data_for_cuda_t* user_data_api) {
    double p4est_reallocation = 0;
    double quadrants_reallocation = 0;
    double faces_reallocation = 0;
+   double quadrants_blocks_reallocation = 0;
    double reset_derivatives_running = 0;
    double compute_max_running = 0;
    double flux_compute_running = 0;
+   double new_flux_compute_running = 0;
    double timestep_update_running = 0;
    double downloading_quads = 0;
 
@@ -1704,6 +1814,11 @@ void step3_ghost_data_alloc_cuda_memory(user_data_for_cuda_t* user_data_api) {
   step3_cuda_minmod_estimate_api->callback = step3_cuda_minmod_estimate;
   step3_cuda_minmod_estimate_api->setup_kernel = setup_step3_cuda_minmod_estimate_kernel;
 
+  cuda_new_iter_face_api_t *step3_new_cuda_upwind_flux_api = (cuda_new_iter_face_api_t*)malloc(sizeof(cuda_new_iter_face_api_t));
+  //step3_new_cuda_upwind_flux_api->callback = step3_new_cuda_upwind_flux;
+  step3_new_cuda_upwind_flux_api->setup_kernel = setup_step3_cuda_new_upwind_flux_kernel;
+  gpuErrchk(cudaMemcpyFromSymbol(&(step3_new_cuda_upwind_flux_api->callback), p_step3_new_cuda_upwind_flux, sizeof(cuda_new_iter_face_t)));
+
    /* create the ghost quadrants */
    ghost = p4est_ghost_new (p4est, P4EST_CONNECT_FULL);
    /* create space for storing the ghost data */
@@ -1743,10 +1858,15 @@ void step3_ghost_data_alloc_cuda_memory(user_data_for_cuda_t* user_data_api) {
 
   start = clock();
   mallocFacesSides(cuda4est, quadrants, quads_to_cuda, ghost, malloc_ghost);
-  mallocQuadrantsBlocks(cuda4est, quadrants, quads_to_cuda, ghost, malloc_ghost);
   stop = clock();
   duration = (double)(stop - start) / CLOCKS_PER_SEC; 
   faces_reallocation+=duration;
+
+  start = clock();
+  mallocQuadrantsBlocks(cuda4est, quadrants, quads_to_cuda, ghost, malloc_ghost);
+  stop = clock();
+  duration = (double)(stop - start) / CLOCKS_PER_SEC;
+  quadrants_blocks_reallocation+=duration; 
   // quadrants memory allocation end
   
   start= clock();
@@ -1941,6 +2061,12 @@ void step3_ghost_data_alloc_cuda_memory(user_data_for_cuda_t* user_data_api) {
       stop = clock();
       duration = (double)(stop - start) / CLOCKS_PER_SEC;
       faces_reallocation+=duration;
+
+      start = clock();
+      mallocQuadrantsBlocks(cuda4est, quadrants, quads_to_cuda, ghost, malloc_ghost);
+      stop = clock();
+      duration = (double)(stop - start) / CLOCKS_PER_SEC;
+      quadrants_blocks_reallocation+=duration; 
      }
 
  
@@ -2010,6 +2136,24 @@ void step3_ghost_data_alloc_cuda_memory(user_data_for_cuda_t* user_data_api) {
     stop = clock();
     duration = (double)(stop - start) / CLOCKS_PER_SEC; 
     flux_compute_running+=duration;
+
+    start = clock();
+    cuda_iterate_new (cuda4est, ghost,
+      (void *) ghost_data, 
+      step3_user_data_api_ghost_data,
+      step3_quad_divergence,
+      step3_cuda_quad_divergence_api,
+      step3_upwind_flux,
+      step3_cuda_upwind_flux_api,
+      step3_new_cuda_upwind_flux_api,   
+#ifdef P4_TO_P8
+      NULL,    
+#endif
+      NULL);
+    stop = clock();
+    duration = (double)(stop - start) / CLOCKS_PER_SEC; 
+    new_flux_compute_running+=duration;
+    
     //cout << "Time taken by cuda_iterate: "
     //     << duration << " seconds" << endl;  
     
@@ -2188,17 +2332,19 @@ void step3_ghost_data_alloc_cuda_memory(user_data_for_cuda_t* user_data_api) {
    quadrants_reallocation+=duration;
 
    double summary_time = 
-   ghost_allocation + p4est_reallocation + quadrants_reallocation + faces_reallocation +
-   reset_derivatives_running + compute_max_running + flux_compute_running + timestep_update_running + 
+   ghost_allocation + p4est_reallocation + quadrants_reallocation + faces_reallocation + quadrants_blocks_reallocation +
+   reset_derivatives_running + compute_max_running + flux_compute_running + new_flux_compute_running + timestep_update_running + 
    downloading_quads;
    printf("summary_time: %f\n", summary_time);
    printf("ghost_allocation: %f, in procent: %f\n", ghost_allocation, ghost_allocation/summary_time);
    printf("p4est_reallocation: %f, in procent: %f\n", p4est_reallocation, p4est_reallocation/summary_time);
    printf("quadrants_reallocation: %f, in procent: %f\n", quadrants_reallocation, quadrants_reallocation/summary_time);
    printf("faces_reallocation: %f, in procent: %f\n", faces_reallocation, faces_reallocation/summary_time);
+   printf("quadrants_blocks_reallocation %f in procent: %f\n", quadrants_blocks_reallocation, quadrants_blocks_reallocation/summary_time);
    printf("reset_derivatives_running: %f, in procent: %f\n", reset_derivatives_running, reset_derivatives_running/summary_time);
    printf("compute_max_running: %f, in procent: %f\n", compute_max_running, compute_max_running/summary_time);
    printf("flux_compute_running: %f, in procent: %f\n", flux_compute_running, flux_compute_running/summary_time);
+   printf("new_flux_compute_running: %f, in procent: %f\n", new_flux_compute_running, new_flux_compute_running/summary_time);
    printf("timestep_update_running: %f, in procent: %f\n", timestep_update_running, timestep_update_running/summary_time);
    printf("downloading_quads: %f, in procent: %f\n", downloading_quads, downloading_quads/summary_time);
  }
@@ -2318,8 +2464,8 @@ void step3_ghost_data_alloc_cuda_memory(user_data_for_cuda_t* user_data_api) {
    p4est_partition (p4est, partforcoarsen, NULL);
  
    /* time step */
-   //step3_timestep (cuda4est, 0.1);
-   step3_timestep (cuda4est, 0.01);
+   step3_timestep (cuda4est, 1);
+   //step3_timestep (cuda4est, 0.01);
  
    /* Destroy the p4est and the connectivity structure. */
    p4est_destroy (p4est);

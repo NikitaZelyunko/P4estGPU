@@ -175,6 +175,22 @@ typedef struct cuda_iter_face_api
   cuda_iter_face_setup_kernel_t setup_kernel;
 }cuda_iter_face_api_t;
 
+typedef void (*cuda_new_iter_face_t) (
+  p4est_t* p4est,
+  size_t output_quads_count,
+  char *block_user_data,
+  unsigned char *block_quad_levels,
+  cuda_light_face_side_t *sides
+);
+
+typedef void (*cuda_new_iter_face_setup_kernel_t)(cuda_new_iter_face_t *callback);
+
+typedef struct cuda_new_iter_face_api
+{
+  cuda_new_iter_face_t callback;
+  cuda_new_iter_face_setup_kernel_t setup_kernel;
+}cuda_new_iter_face_api_t;
+
 /** Information about one side of a corner in the forest.  If a \a quad is local
  * (\a is_ghost is false), then its \a quadid indexes the tree's quadrant array;
  * otherwise, it indexes the ghosts array. If a quadrant should be present, but
@@ -276,6 +292,19 @@ void                cuda_iterate (cuda4est_t * cuda4est,
                                    p4est_iter_face_t iter_face,
                                    cuda_iter_face_api_t* cuda_iter_face_api,
                                    p4est_iter_corner_t iter_corner);
+void
+cuda_iterate_new (cuda4est_t * cuda4est, p4est_ghost_t * Ghost_layer,
+              void* user_data,
+              user_data_for_cuda_t *user_data_volume_cuda_api,
+              p4est_iter_volume_t iter_volume,
+              cuda_iter_volume_api_t* cuda_iter_volume_api,
+              p4est_iter_face_t iter_face,
+              cuda_iter_face_api_t* cuda_iter_face_api,
+              cuda_new_iter_face_api_t *cuda_new_iter_face_api,
+#ifdef P4_TO_P8
+               p8est_iter_edge_t iter_edge,
+#endif
+               p4est_iter_corner_t iter_corner);
 
 /** Return a pointer to a iter_corner_side array element indexed by a int.
  */

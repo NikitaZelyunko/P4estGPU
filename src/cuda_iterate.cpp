@@ -2607,6 +2607,14 @@ p4est_volume_iterate_simple (p4est_t * p4est, p4est_ghost_t * ghost_layer,
    simple_face_cuda_iterate(cuda4est, ghost_layer, user_data_volume_cuda_api, iter_face_api);
  }
 
+ static void
+ cuda_new_face_iterate_simple (cuda4est_t * cuda4est, p4est_ghost_t * ghost_layer,
+                              user_data_for_cuda_t *user_data_volume_cuda_api, 
+                              cuda_new_iter_face_api_t* new_iter_face_api)
+ {
+   simple_new_face_cuda_iterate(cuda4est, ghost_layer, user_data_volume_cuda_api, new_iter_face_api);
+ }
+
 
 static void
 cuda_volume_iterate (p4est_iter_volume_args_t * args, void *user_data,
@@ -3244,6 +3252,7 @@ cuda_iterate_ext (cuda4est_t * cuda4est, p4est_ghost_t * Ghost_layer,
                   cuda_iter_volume_api_t* cuda_iter_volume_api,
                   p4est_iter_face_t iter_face,
                   cuda_iter_face_api_t* cuda_iter_face_api,
+                  cuda_new_iter_face_api_t *cuda_iter_new_face_api,
 #ifdef P4_TO_P8
                    p8est_iter_edge_t iter_edge,
 #endif
@@ -3311,11 +3320,22 @@ cuda_iterate_ext (cuda4est_t * cuda4est, p4est_ghost_t * Ghost_layer,
     return;
   }
 
-  if(cuda_iter_face_api != NULL) {
-    if(cuda_iter_volume_api != NULL) {
-      cuda_volume_iterate_simple(cuda4est, ghost_layer, user_data_volume_cuda_api, cuda_iter_volume_api);
+
+
+  if(cuda_iter_new_face_api != NULL) {
+    if(cuda_iter_face_api != NULL) {
+      if(cuda_iter_volume_api != NULL) {
+        //cuda_volume_iterate_simple(cuda4est, ghost_layer, user_data_volume_cuda_api, cuda_iter_volume_api);
+      }
+      cuda_new_face_iterate_simple(cuda4est, ghost_layer, user_data_volume_cuda_api, cuda_iter_new_face_api);
     }
-    cuda_face_iterate_simple(cuda4est, ghost_layer, user_data_volume_cuda_api, cuda_iter_face_api);
+  } else {
+    if(cuda_iter_face_api != NULL) {
+      if(cuda_iter_volume_api != NULL) {
+        cuda_volume_iterate_simple(cuda4est, ghost_layer, user_data_volume_cuda_api, cuda_iter_volume_api);
+      }
+      cuda_face_iterate_simple(cuda4est, ghost_layer, user_data_volume_cuda_api, cuda_iter_face_api);
+    }
   }
 
   /** initialize arrays that keep track of where we are in the search */
@@ -3428,7 +3448,28 @@ cuda_iterate (cuda4est_t * cuda4est, p4est_ghost_t * Ghost_layer,
 #endif
                p4est_iter_corner_t iter_corner)
 {
-  cuda_iterate_ext (cuda4est, Ghost_layer, user_data, user_data_volume_cuda_api, iter_volume, cuda_iter_volume_api, iter_face, cuda_iter_face_api,
+  cuda_iterate_ext (cuda4est, Ghost_layer, user_data, user_data_volume_cuda_api, iter_volume, cuda_iter_volume_api, iter_face, cuda_iter_face_api, NULL,
+#ifdef P4_TO_P8
+                     iter_edge,
+#endif
+                     iter_corner, 0);
+}
+
+void
+cuda_iterate_new (cuda4est_t * cuda4est, p4est_ghost_t * Ghost_layer,
+              void* user_data,
+              user_data_for_cuda_t *user_data_volume_cuda_api,
+              p4est_iter_volume_t iter_volume,
+              cuda_iter_volume_api_t* cuda_iter_volume_api,
+              p4est_iter_face_t iter_face,
+              cuda_iter_face_api_t* cuda_iter_face_api,
+              cuda_new_iter_face_api_t* cuda_iter_new_face_api,
+#ifdef P4_TO_P8
+               p8est_iter_edge_t iter_edge,
+#endif
+               p4est_iter_corner_t iter_corner)
+{
+  cuda_iterate_ext (cuda4est, Ghost_layer, user_data, user_data_volume_cuda_api, iter_volume, cuda_iter_volume_api, iter_face, cuda_iter_face_api, cuda_iter_new_face_api,
 #ifdef P4_TO_P8
                      iter_edge,
 #endif

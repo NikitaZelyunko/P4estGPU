@@ -11,24 +11,6 @@ typedef struct step3_data
 step3_data_t;
 
 p4est_quadrants_to_cuda_t* mallocForQuadrants(cuda4est_t* cuda4est, sc_array_t *quadrants, quad_user_data_api_t *user_data_api) {
-    /*
-    size_t *start_indexes;
-    unsigned char *quads_boundaries;
-    sc_array *overlaped_quadrants;
-    clock_t start, stop;
-    double duration;
-    start = clock();
-    generate_overlap_p4est_quadrants(
-      quadrants, p4est_tree_array_index(cuda4est->p4est->trees, 0)->maxlevel,
-      start_indexes, quads_boundaries, overlaped_quadrants
-    );
-    stop = clock();
-    duration = (double)(stop - start)/CLOCKS_PER_SEC;
-    free(start_indexes);
-    free(quads_boundaries);
-    std::cout<<"generate_overlap_quads: "<<duration<<std::endl;
-    */
-    //test_quads();
     p4est_quadrants_to_cuda_t *quads_to_cuda = (p4est_quadrants_to_cuda_t*) malloc(sizeof(p4est_quadrants_to_cuda_t));
     sc_array_t *d_quadrants;
     size_t d_quadrants_array_size = quadrants->elem_size * quadrants->elem_count;
@@ -107,6 +89,7 @@ void updateQuadrants(cuda4est_t* cuda4est, p4est_quadrants_to_cuda* quads_to_cud
 
 void freeMemoryForQuadrants(p4est_quadrants_to_cuda_t* quads_to_cuda, quad_user_data_api_t *user_data_api) {
   freeMemoryForFacesSides(quads_to_cuda);
+  freeMemoryForQuadrantsBlocks(quads_to_cuda);
   user_data_api->free_cuda_memory_for_all_quads(quads_to_cuda->all_quads_user_data_allocate_info);
   free(quads_to_cuda->all_quads_user_data_allocate_info);
   gpuErrchk(cudaFree(quads_to_cuda->d_quadrants_array_temp));
@@ -1149,7 +1132,7 @@ void freeMemoryForFacesSides(p4est_quadrants_to_cuda* quads_to_cuda) {
 }
 
 void mallocQuadrantsBlocks(cuda4est_t* cuda4est, sc_array_t* quadrants, p4est_quadrants_to_cuda* quads_to_cuda, p4est_ghost_t* Ghost_layer, p4est_ghost_to_cuda_t* ghost_to_cuda) {
-    clock_t start = clock();
+  clock_t start = clock();
   clock_t stop = clock();
   double duration = (double)(stop - start) / CLOCKS_PER_SEC;
 
@@ -1253,47 +1236,25 @@ void mallocQuadrantsBlocks(cuda4est_t* cuda4est, sc_array_t* quadrants, p4est_qu
   P4EST_FREE (owned);
 
   size_t quads_length = quads_to_cuda->quadrants_length;
-  unsigned char *quad_is_used = (unsigned char*)malloc(sizeof(unsigned char) * quads_length);
-  unsigned char *ghost_quad_is_used = (unsigned char*)malloc(sizeof(unsigned char) * (ghost_layer->ghosts.elem_count + 1));
-  ghost_quad_is_used++;
-  std::vector<p4est_iter_face_side_t>::iterator faces_iter = all_faces.end();
-  size_t faces_count = all_faces.size();
-  quads_to_cuda->sides_count = faces_count;
-  start = clock();
+  size_t sides_count = all_faces.size();
+  quads_to_cuda->sides_count = sides_count;
   p4est_iter_face_side_t* sides_array = all_faces.data();
-  size_t faces_length = faces_count/2;
-  unsigned char *faces_iteration_indexes = (unsigned char*)malloc(faces_length * sizeof(unsigned char));
-
-  for(size_t i = 0; i < quads_length; i++){
-    quad_is_used[i] = 0;
-  }
-  ghost_quad_is_used[-1] = 0;
-  for(size_t i = 0; i < ghost_layer->ghosts.elem_count; i++) {
-    ghost_quad_is_used[i] = 0;
-  }
-  size_t *faces_per_iteration = (size_t*)malloc(8 * sizeof(size_t));
-  for(int i = 0; i < 8; i++) {
-    faces_per_iteration[i] = 0;
-  }
+  size_t faces_length = sides_count/2;
 
   size_t block_max_quads_count = 128;
   const unsigned char sides_max_count = 8;
   const unsigned char faces_max_count = sides_max_count / 2;
   const unsigned char mask_bound[faces_max_count] = {1, 2, 4, 8};
 
-  size_t block_count;
-  if(quads_length % block_max_quads_count) {
-    block_count = quads_length / block_max_quads_count + 1;
-  } else {
-    block_count = quads_length / block_max_quads_count;
-  }
-  size_t *quad_indexes = new size_t[block_count * block_max_quads_count];
-  unsigned char* block_length = new unsigned char[block_count];
+  std::vector<size_t> quad_indexes;
+  std::vector<unsigned char> block_lengths;
+  std::vector<unsigned char> output_quad_length_per_block;
 
   size_t ** quad_faces = new size_t*[faces_max_count];
   for(unsigned char i = 0; i < faces_max_count; i++) {
     quad_faces[i] = new size_t[quads_length];
   }
+
   p4est_iter_face_side_t *sides_cursor = sides_array;
   for(size_t i = 0; i < faces_length; i++) {
     p4est_iter_face_side_t *first_side = sides_cursor++;
@@ -1331,241 +1292,345 @@ void mallocQuadrantsBlocks(cuda4est_t* cuda4est, sc_array_t* quadrants, p4est_qu
     }
   }
 
+
   unsigned char *quad_is_used_in_block = new unsigned char[quads_length];
   for(size_t i = 0; i < quads_length; i++) {
     quad_is_used_in_block[i] = 0;
   }
 
   unsigned char max_quads_on_sides = 8;
-  size_t *buffer = new size_t[max_quads_on_sides];
-  size_t block_index = 0;
-  size_t k = 0;
-  size_t quad_indexes_offset = 0;
-  for(size_t i = 0; i < quads_length;) {
-    unsigned char buffer_count = 0;
-    for(unsigned char j = 0; j < faces_max_count; j++) {
-      p4est_iter_face_side_t* first_side = sides_array + 2 * quad_faces[j][i];
-      if(first_side->is_hanging) {
-        size_t first_quad = first_side->is.hanging.quadid[0];
-        size_t second_quad = first_side->is.hanging.quadid[1];
-        if(first_quad != -1) {
-          if(!quad_is_used_in_block[first_quad]) {
-            buffer[buffer_count++] = first_quad;
-            quad_is_used_in_block[first_quad] = 1;
-          }
-        }
-        if(second_quad != -1) {
-          if(!quad_is_used_in_block[second_quad]) {
-            buffer[buffer_count++] = second_quad;
-            quad_is_used_in_block[second_quad] = 1;
-          }
-        }
-      } else {
-        size_t quad = first_side->is.full.quadid;
-        if(quad != -1) {
-          if(!quad_is_used_in_block[quad]){
-            buffer[buffer_count++] = quad;
-            quad_is_used_in_block[quad] = 1;
-          }
-        }
-      }
+  size_t *quads_buffer = new size_t[max_quads_on_sides];
+  size_t max_faces_per_quads_sides = max_quads_on_sides * faces_max_count;
+  size_t *faces_buffer = new size_t[max_faces_per_quads_sides];
+  unsigned char k = 0;
+  size_t faces_block_count = 0;
 
-      p4est_iter_face_side_t* second_side = first_side + 1;
-      if(second_side->is_hanging) {
-        size_t first_quad = second_side->is.hanging.quadid[0];
-        size_t second_quad = second_side->is.hanging.quadid[1];
-        if(first_quad != -1) {
-          if(!quad_is_used_in_block[first_quad]) {
-            buffer[buffer_count++] = first_quad;
-            quad_is_used_in_block[first_quad] = 1;
+  std::vector<size_t> faces_block_indexes;
+  std::vector<size_t> faces_block_lengths;
+
+  unsigned char *face_is_used_in_block = new unsigned char[faces_length];
+  for(size_t i = 0; i < faces_length; i++) {
+    face_is_used_in_block[i] = 0;
+  }
+
+  size_t prev_output_quads_block_count = 0;
+  unsigned char quads_buffer_count = 0;
+  size_t current_quad_index = 0;
+  for(; current_quad_index < quads_length;) {
+    size_t faces_buffer_count = 0;
+    quads_buffer_count = 0;
+    for(unsigned char j = 0; j < faces_max_count; j++) {
+      size_t face_id = quad_faces[j][current_quad_index];
+      if(!face_is_used_in_block[face_id]) {
+        p4est_iter_face_side_t* first_side = sides_array + 2 * face_id;
+        if(first_side->is_hanging) {
+          size_t first_quad = first_side->is.hanging.quadid[0];
+          size_t second_quad = first_side->is.hanging.quadid[1];
+          if(first_quad != -1) {
+            if(!quad_is_used_in_block[first_quad]) {
+              quads_buffer[quads_buffer_count++] = first_quad;
+              quad_is_used_in_block[first_quad] = 1;
+            }
+          }
+          if(second_quad != -1) {
+            if(!quad_is_used_in_block[second_quad]) {
+              quads_buffer[quads_buffer_count++] = second_quad;
+              quad_is_used_in_block[second_quad] = 1;
+            }
+          }
+          
+        } else {
+          size_t quad = first_side->is.full.quadid;
+          if(quad != -1) {
+            if(!quad_is_used_in_block[quad]){
+              quads_buffer[quads_buffer_count++] = quad;
+              quad_is_used_in_block[quad] = 1;
+            }
           }
         }
-        if(second_quad != -1) {
-          if(!quad_is_used_in_block[second_quad]) {
-            buffer[buffer_count++] = second_quad;
-            quad_is_used_in_block[second_quad] = 1;
+
+        p4est_iter_face_side_t* second_side = first_side + 1;
+        if(second_side->is_hanging) {
+          size_t first_quad = second_side->is.hanging.quadid[0];
+          size_t second_quad = second_side->is.hanging.quadid[1];
+          if(first_quad != -1) {
+            if(!quad_is_used_in_block[first_quad]) {
+              quads_buffer[quads_buffer_count++] = first_quad;
+              quad_is_used_in_block[first_quad] = 1;
+            }
+          }
+          if(second_quad != -1) {
+            if(!quad_is_used_in_block[second_quad]) {
+              quads_buffer[quads_buffer_count++] = second_quad;
+              quad_is_used_in_block[second_quad] = 1;
+            }
+          }
+        } else {
+          size_t quad = second_side->is.full.quadid;
+          if(quad != -1) {
+            if(!quad_is_used_in_block[quad]){
+              quads_buffer[quads_buffer_count++] = quad;
+              quad_is_used_in_block[quad] = 1;
+            }
           }
         }
-      } else {
-        size_t quad = second_side->is.full.quadid;
-        if(quad != -1) {
-          if(!quad_is_used_in_block[quad]){
-            buffer[buffer_count++] = quad;
-            quad_is_used_in_block[quad] = 1;
-          }
-        }
+        face_is_used_in_block[face_id] = 1;
+        faces_buffer[faces_buffer_count++] = face_id;
       }
     }
-    if((block_max_quads_count - k) >= buffer_count) {
-      memcpy(&(quad_indexes[quad_indexes_offset + k]), buffer, sizeof(size_t) * buffer_count);
-      k+=buffer_count;
-      i++;
+    if((block_max_quads_count - k) >= quads_buffer_count) {
+      for(unsigned char i = 0; i < quads_buffer_count; i++) {
+        quad_indexes.push_back(quads_buffer[i]);
+      }
+      for(unsigned char i = 0; i < faces_buffer_count; i++) {
+        faces_block_indexes.push_back(faces_buffer[i]);
+      }
+      k+=quads_buffer_count;
+      faces_block_count+=faces_buffer_count;
+      current_quad_index++;
     } else {
-      block_length[block_index++] = k;
-      quad_indexes_offset = block_index * block_max_quads_count;
+      block_lengths.push_back(k);
+      output_quad_length_per_block.push_back(current_quad_index - prev_output_quads_block_count);
+      faces_block_lengths.push_back(faces_block_count);
       k = 0;
+      faces_block_count = 0;
+      prev_output_quads_block_count = current_quad_index;
+      
       for(size_t l = 0; l < quads_length; l++) {
         quad_is_used_in_block[l] = 0;
       }
+      for(size_t i = 0; i < faces_length; i++) {
+        face_is_used_in_block[i] = 0;
+      }
     }
   }
-  block_length[block_index] = k;
-  size_t result_length = 0;
-  for(size_t i = 0; i < block_count; i++) {
-    result_length+=block_length[i];
+  if(k != 0) {
+    block_lengths.push_back(k);
+    output_quad_length_per_block.push_back(current_quad_index - prev_output_quads_block_count);
+    faces_block_lengths.push_back(faces_block_count);
   }
+
+  delete face_is_used_in_block;
+
+
+  size_t block_count = block_lengths.size();
+
+  size_t result_quads_length = 0;
+  size_t result_faces_length = 0;
+  size_t result_output_quads_length = 0;
+  std::vector<size_t>::iterator faces_block_it = faces_block_lengths.begin();
+  std::vector<unsigned char>::iterator quadrants_block_it = block_lengths.begin();
+  std::vector<unsigned char>::iterator output_quadrants_block_it = output_quad_length_per_block.begin();
+
+  size_t *block_lengths_config = (size_t*)malloc(sizeof(size_t) * block_count * 7);
+  size_t *block_lengths_config_cursor = block_lengths_config;
   size_t user_data_size = cuda4est->p4est->data_size;
-  void *user_data_for_blocks = (void*)malloc(user_data_size * result_length);
-  cuda_light_face_side_t *light_faces_for_cuda = (cuda_light_face_side_t*) malloc(sizeof(cuda_light_face_side_t)* faces_count);
-  size_t *faces_blocks_length = (size_t*) malloc(sizeof(size_t) * block_count);
-  unsigned char* face_is_used = new unsigned char[faces_length];
-  for(size_t i = 0; i < faces_length; i++) {
-    face_is_used[i] = 0;
+
+  size_t max_shared_memory_size = 0;
+
+  for(;quadrants_block_it != block_lengths.end(); quadrants_block_it++, faces_block_it++, output_quadrants_block_it++, block_lengths_config_cursor+=7) {
+    block_lengths_config_cursor[0] = result_quads_length;
+    block_lengths_config_cursor[1] = *quadrants_block_it;
+    
+    block_lengths_config_cursor[2] = result_quads_length * user_data_size;
+    block_lengths_config_cursor[3] = *quadrants_block_it * user_data_size;
+
+    block_lengths_config_cursor[4] = *output_quadrants_block_it;
+
+    block_lengths_config_cursor[5] = result_faces_length;
+    block_lengths_config_cursor[6] = *faces_block_it;
+
+    size_t shared_memory_size = *quadrants_block_it * user_data_size + *quadrants_block_it + sizeof(cuda_light_face_side_t) * 2 * *faces_block_it;
+    if(max_shared_memory_size < shared_memory_size) {
+      max_shared_memory_size = shared_memory_size;
+    }
+
+    result_quads_length += *quadrants_block_it;
+    result_faces_length += *faces_block_it;
+    result_output_quads_length += *output_quadrants_block_it;
   }
-  size_t *quad_indexes_cursor = quad_indexes;
-  size_t quad_indexes_offset = 0;
-  void *user_data_for_blocks_cursor = user_data_for_blocks;
-  for(size_t i = 0; i< block_count; i++) {
-    size_t cur_block_length = block_length[i];
-    size_t *quad_indexes_cursor += cur_block_length;
-    quad_indexes_offset+=cur_block_length;
-    size_t cur_block_faces_count = 0;
-    for(size_t j = 0, quad_index = quad_indexes_offset; j < cur_block_length; j++, quad_index++) {
-      p4est_quadrant_t * quad = p4est_quadrant_array_index(quadrants, quad_indexes_cursor[j]);
-      memcpy(user_data_for_blocks_cursor, quad->p.user_data, user_data_size);
-      for(unsigned char k = 0; k < faces_max_count; k++) {
-        size_t face_id = quad_faces[k][quad_indexes[quad_index]];
-        p4est_iter_face_side_t *face = all_faces[face_id];
-        cuda_light_face_side_t &light_face = light_faces_for_cuda[face_id];
-        light_face
+
+  quads_to_cuda->shared_memory_size = max_shared_memory_size;
+
+  unsigned char *quad_local_indexes = quad_is_used_in_block;
+  for(size_t i = 0; i < quads_length; i++) {
+    quad_local_indexes[i] = -1;
+  }
+
+  unsigned char empty_local_index = -1;
+
+  size_t *quad_indexes_arr = quad_indexes.data();
+  unsigned char *block_lengths_arr = block_lengths.data();
+
+  unsigned char *output_quad_length_per_block_arr = output_quad_length_per_block.data();
+
+  size_t *faces_block_indexes_arr = faces_block_indexes.data();
+  size_t *faces_block_lengths_arr = faces_block_lengths.data();
+
+  size_t start_output_index = 0;
+  size_t end_output_index = 0;
+
+  cuda_light_face_side_t *light_sides_for_cuda = (cuda_light_face_side_t*)malloc(sizeof(cuda_light_face_side_t) * 2 * result_faces_length);
+  size_t start_face_index = 0;
+  size_t end_face_index = 0;
+
+  
+  void *user_data_for_blocks = (void*)malloc(user_data_size * result_quads_length);
+  void *user_data_cursor = user_data_for_blocks;
+  
+  current_quad_index = 0;
+  size_t current_not_valid_quad_index = 0;
+  size_t *not_valid_block_quad_global_index = (size_t*)malloc(sizeof(size_t) * (result_quads_length - quads_length));
+  size_t *valid_quad_index_in_result_quads = (size_t*)malloc(sizeof(size_t) * quads_length);
+
+  unsigned char *quads_levels = new unsigned char[result_quads_length];
+
+  for(size_t block_index = 0; block_index < block_count; block_index++) {
+    start_output_index = end_output_index;
+    end_output_index += output_quad_length_per_block_arr[block_index];
+
+    start_face_index = end_face_index;
+    end_face_index += faces_block_lengths_arr[block_index];
+
+    size_t not_output_quad_index = output_quad_length_per_block_arr[block_index];
+    for(size_t quad_index = start_output_index; quad_index < end_output_index; quad_index++, user_data_cursor = user_data_cursor + user_data_size) {
+      p4est_quadrant_t *quadrant = p4est_quadrant_array_index(quadrants, quad_index);
+      memcpy(user_data_cursor, p4est_quadrant_array_index(quadrants, quad_index)->p.user_data, user_data_size);
+      quads_levels[current_quad_index] = quadrant->level;
+      valid_quad_index_in_result_quads[quad_index]=current_quad_index++;
+    }
+    for(size_t face_index = start_face_index; face_index < end_face_index; face_index++) {
+      size_t face_id = faces_block_indexes_arr[face_index];
+      size_t side_id = face_id * 2;
+
+      size_t base_side_index = face_index * 2;
+      
+      for(unsigned char side_index = 0; side_index < 2; side_index++, side_id++) {
+        p4est_iter_face_side_t *side = sides_array + side_id;
+        cuda_light_face_side_t &light_side = light_sides_for_cuda[base_side_index + side_index];
+        light_side.face = side->face;
+        if(side->is_hanging) {
+          light_side.is_hanging = 1;
+          size_t first_quad = side->is.hanging.quadid[0];
+          size_t second_quad = side->is.hanging.quadid[1];
+          if(first_quad != -1) {
+            size_t first_local_quad_index = quad_local_indexes[first_quad];
+            if(first_local_quad_index != empty_local_index) {
+            } else if(first_quad >= start_output_index && first_quad < end_output_index) {
+              first_local_quad_index = quad_local_indexes[first_quad] = first_quad - start_output_index;
+            } else {
+              first_local_quad_index = quad_local_indexes[first_quad] = not_output_quad_index++;
+              p4est_quadrant_t *quadrant = p4est_quadrant_array_index(quadrants, first_quad);
+              memcpy(user_data_cursor, p4est_quadrant_array_index(quadrants, first_quad)->p.user_data, user_data_size);
+              quads_levels[current_quad_index] = quadrant->level;
+              user_data_cursor = user_data_cursor + user_data_size;
+              not_valid_block_quad_global_index[current_not_valid_quad_index++] = first_quad;
+              current_quad_index++;
+            }
+            light_side.is.hanging.quadid[0] = first_local_quad_index;
+          }
+          if(second_quad != -1) {
+            size_t second_local_quad_index = quad_local_indexes[second_quad];
+            if(second_local_quad_index != empty_local_index) {
+            } else if(second_quad >= start_output_index && second_quad < end_output_index) {
+              second_local_quad_index = quad_local_indexes[second_quad] = second_quad - start_output_index;
+            } else {
+              second_local_quad_index = quad_local_indexes[second_quad] = not_output_quad_index++;
+              p4est_quadrant_t *quadrant = p4est_quadrant_array_index(quadrants, second_quad);
+              memcpy(user_data_cursor, p4est_quadrant_array_index(quadrants, second_quad)->p.user_data, user_data_size);
+              quads_levels[current_quad_index] = quadrant->level;
+              user_data_cursor = user_data_cursor + user_data_size;
+              not_valid_block_quad_global_index[current_not_valid_quad_index++] = second_quad;
+              current_quad_index++;
+            }
+            light_side.is.hanging.quadid[1] = second_local_quad_index;
+          }
+        } else {
+          light_side.is_hanging = 0;
+          size_t quad = side->is.full.quadid;
+          if(quad != -1){
+            size_t quad_local_index = quad_local_indexes[quad];
+            if(quad_local_index != empty_local_index) {
+            } else if(quad >= start_output_index && quad < end_output_index) {
+              quad_local_index = quad_local_indexes[quad] = quad - start_output_index;
+            } else {
+              quad_local_index = quad_local_indexes[quad] = not_output_quad_index++;
+              p4est_quadrant_t *quadrant = p4est_quadrant_array_index(quadrants, quad);
+              memcpy(user_data_cursor, p4est_quadrant_array_index(quadrants, quad)->p.user_data, user_data_size);
+              quads_levels[current_quad_index] = quadrant->level;
+              user_data_cursor = user_data_cursor + user_data_size;
+              not_valid_block_quad_global_index[current_not_valid_quad_index++] = quad;
+              current_quad_index++;
+            }
+            light_side.is.full.quadid = quad_local_index;
+          }
+        }
       }
     }
-    for(size_t i = 0; i < faces_length; i++) {
-      face_is_used[i] = 0;
+    for(size_t i = 0; i < quads_length; i++) {
+      quad_local_indexes[i] = -1;
     }
   }
 
-  size_t quadrant_size = sizeof(p4est_quadrant_t);
-  unsigned char lazy = 0;
-  for(size_t face_index = 0, j = 0; face_index < faces_length; face_index++, lazy = 0) {
-    unsigned char *a = &(lazy);
-    unsigned char *b = &(lazy);
-    unsigned char *c = &(lazy);
-    p4est_iter_face_side_t* left = &sides_array[j++];
-    if(left->is_hanging) {
-      p4est_locidx_t * left_ids = left->is.hanging.quadid;
-      if(left_ids[0] != -1) {
-        if(left->is.hanging.is_ghost[0]) {
-          a = &(ghost_quad_is_used[left_ids[0]]);
-          left->is.hanging.quad[0] = (p4est_quadrant_t*)(ghost_to_cuda->d_ghosts_array_temp + left_ids[0]*quadrant_size);
-        } else {
-          a = &(quad_is_used[left_ids[0]]);
-          left->is.hanging.quad[0] = quads_to_cuda->d_quadrants_array_temp + left_ids[0];
-        }
-      }
-      if(left_ids[1] != -1) {
-        if(left->is.hanging.is_ghost[1]) {
-          b = &(ghost_quad_is_used[left_ids[1]]);
-          left->is.hanging.quad[1] = (p4est_quadrant_t*)(ghost_to_cuda->d_ghosts_array_temp + left_ids[1]*quadrant_size);
-        } else {
-          b = &(quad_is_used[left_ids[1]]);
-          left->is.hanging.quad[1] = quads_to_cuda->d_quadrants_array_temp + left_ids[1];
-        }
-      }
-    } else {
-      p4est_locidx_t left_id = left->is.full.quadid;
-      if(left_id != -1) {
-        if(left->is.full.is_ghost) {
-          a = &(ghost_quad_is_used[left_id]);
-          left->is.full.quad = (p4est_quadrant_t*)(ghost_to_cuda->d_ghosts_array_temp + left_id*quadrant_size);
-        } else {
-          a = &(quad_is_used[left_id]);
-          left->is.full.quad = quads_to_cuda->d_quadrants_array_temp + left_id;
-        }
-      }
-    }
-    p4est_iter_face_side_t *right = &sides_array[j++];
-    if(right->is_hanging) {
-      p4est_locidx_t * right_ids = right->is.hanging.quadid;
-      if(right_ids[0] != -1) {
-        if(right->is.hanging.is_ghost[0]) {
-          b = &(ghost_quad_is_used[right_ids[0]]);
-          right->is.hanging.quad[0] = (p4est_quadrant_t*)(ghost_to_cuda->d_ghosts_array_temp + right_ids[0]*quadrant_size);
-        } else {
-          b = &(quad_is_used[right_ids[0]]);
-          right->is.hanging.quad[0] = quads_to_cuda->d_quadrants_array_temp + right_ids[0];
-        }
-      }
-      if(right_ids[1] != -1) {
-        if(right->is.hanging.is_ghost[1]) {
-          c = &(ghost_quad_is_used[right_ids[1]]);
-          right->is.hanging.quad[1] = (p4est_quadrant_t*)(ghost_to_cuda->d_ghosts_array_temp + right_ids[1]*quadrant_size);
-        } else {
-          c = &(quad_is_used[right_ids[1]]);
-          right->is.hanging.quad[1] = quads_to_cuda->d_quadrants_array_temp + right_ids[1];
-        }
-      }
-    } else {
-      p4est_locidx_t right_id = right->is.full.quadid;
-      if(right_id != -1) {
-        if(right->is.full.is_ghost) {
-          c = &(ghost_quad_is_used[right_id]);
-          right->is.full.quad = (p4est_quadrant_t*)(ghost_to_cuda->d_ghosts_array_temp + right_id*quadrant_size);
-        } else {
-          c = &(quad_is_used[right_id]);
-          right->is.full.quad = quads_to_cuda->d_quadrants_array_temp + right_id;
-        }
-      }
-    }
-    unsigned char mask = 0x00000001;
-    for(int i = 0; i < 8; i++, mask <<= 1) {
-      if((*a & mask) != 0x00000000) {
-        continue;
-      }
-      if((*b & mask) != 0x00000000) {
-        continue;
-      }
-      if((*c & mask) != 0x00000000) {
-        continue;
-      }
-      *a |=mask;
-      *b |=mask;
-      *c |=mask;
-      faces_iteration_indexes[face_index] = i;
-      faces_per_iteration[i]++;
-      break;
-    }
+  for(unsigned char i = 0; i < faces_max_count; i++) {
+    delete quad_faces[i];
   }
-  size_t face_side_size = sizeof(p4est_iter_face_side_t);
-  size_t sides_bytes_alloc = faces_count * face_side_size;
-  p4est_iter_face_side_t* sorted_face_sides = (p4est_iter_face_side_t*)malloc(sides_bytes_alloc);
-  size_t *start_indexes = (size_t*)malloc(9 * sizeof(size_t));
-  start_indexes[0] = 0;
-  size_t faces_iteration_count = 0;
-  for(int i = 1; i <= 8; i++) {
-    start_indexes[i] = start_indexes[i-1] + (faces_per_iteration[i-1] *= 2);
-    if(faces_per_iteration[i-1] != 0) {
-      faces_iteration_count++;
-    }
-  }
-  for(size_t i = 0, j = 0; i < faces_length; i++) {
-    sorted_face_sides[start_indexes[faces_iteration_indexes[i]]++] = sides_array[j++];
-    sorted_face_sides[start_indexes[faces_iteration_indexes[i]]++] = sides_array[j++];
-  }
-  stop = clock();
-  quads_to_cuda->h_sides = sorted_face_sides;
-  p4est_iter_face_side_t* d_sides;
-  gpuErrchk(cudaMalloc((void**)&d_sides, sides_bytes_alloc));
-  gpuErrchk(cudaMemcpy(d_sides, sorted_face_sides, sides_bytes_alloc, cudaMemcpyHostToDevice));
-  quads_to_cuda->d_sides = d_sides;
-  quads_to_cuda->faces_per_iter = faces_per_iteration;
-  quads_to_cuda->faces_iteration_count = faces_iteration_count;
-  free(start_indexes);
-  free(faces_iteration_indexes);
+  delete quad_faces;
 
-  free(quad_is_used);
-  free(--ghost_quad_is_used);
+  delete quad_is_used_in_block;
+  
+
+  quads_to_cuda->block_count = block_count;
+  quads_to_cuda->config_blocks = block_lengths_config;
+
+  size_t *d_config_blocks;
+  gpuErrchk(cudaMalloc((void**)&d_config_blocks, sizeof(size_t) * 7 * block_count));
+  gpuErrchk(cudaMemcpy(d_config_blocks, block_lengths_config, sizeof(size_t) * 7 * block_count, cudaMemcpyHostToDevice));
+  quads_to_cuda->d_config_blocks = d_config_blocks;
+
+  quads_to_cuda->not_valid_block_quad_global_index = not_valid_block_quad_global_index;
+  quads_to_cuda->valid_quad_index_in_result_quads = valid_quad_index_in_result_quads;
+
+  cuda_light_face_side_t *d_light_sides;
+  gpuErrchk(cudaMalloc((void**)&d_light_sides, sizeof(cuda_light_face_side_t) * result_faces_length * 2));
+  gpuErrchk(cudaMemcpy(d_light_sides, light_sides_for_cuda, sizeof(cuda_light_face_side_t) * result_faces_length * 2, cudaMemcpyHostToDevice));
+  quads_to_cuda->d_light_sides = d_light_sides;
+
+  for(size_t i = 0; i < 323; i++) {
+    //printf("side-%d : which_face: %lu\n", i*2, light_sides_for_cuda[i * 2].face);
+    //printf("side-%d : which_face: %lu\n", i*2 + 1, light_sides_for_cuda[i * 2 + 1].face);
+  }
+
+  free(light_sides_for_cuda);
+
+  void* d_blocks_user_data;
+  gpuErrchk(cudaMalloc((void**)&d_blocks_user_data, user_data_size * result_quads_length));
+  gpuErrchk(cudaMemcpy(d_blocks_user_data, user_data_for_blocks, user_data_size * result_quads_length, cudaMemcpyHostToDevice));
+  quads_to_cuda->d_blocks_user_data = d_blocks_user_data;
+
+  unsigned char* d_quads_levels;
+  gpuErrchk(cudaMalloc((void**)&d_quads_levels, result_quads_length));
+  gpuErrchk(cudaMemcpy(d_quads_levels, quads_levels, result_quads_length, cudaMemcpyHostToDevice));
+  quads_to_cuda->d_quads_levels = d_quads_levels;
+
+  free(quads_levels);
+
+  quads_to_cuda->result_quads_length = result_quads_length;
+
+  free(user_data_for_blocks);
+
   cuda_iter_loop_args_destroy (loop_args);
+}
+
+void freeMemoryForQuadrantsBlocks(p4est_quadrants_to_cuda* quads_to_cuda) {
+  free(quads_to_cuda->config_blocks);
+  free(quads_to_cuda->not_valid_block_quad_global_index);
+  free(quads_to_cuda->valid_quad_index_in_result_quads);
+
+  gpuErrchk(cudaFree(quads_to_cuda->d_config_blocks));
+  gpuErrchk(cudaFree(quads_to_cuda->d_blocks_user_data));
+  gpuErrchk(cudaFree(quads_to_cuda->d_quads_levels));
+  gpuErrchk(cudaFree(quads_to_cuda->d_light_sides));
 }
 
 p4est_ghost_to_cuda_t* mallocForGhost(p4est_t* p4est, p4est_ghost_t* ghost_layer) {
