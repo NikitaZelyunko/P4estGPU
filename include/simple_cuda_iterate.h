@@ -46,7 +46,7 @@ extern "C" {
         void* user_data, cuda_iter_face_t iter_face,
         size_t faces_per_iter, size_t faces_per_thread, size_t needed_block_count, size_t threads_per_block);
     
-    void run_new_simple_faces_iterate(p4est_t* p4est,
+    void run_new_simple_faces_iterate(p4est_t* p4est, char* ctx,
         size_t block_count,
         size_t *block_config,
         void *blocks_user_data,

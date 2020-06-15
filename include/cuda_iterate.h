@@ -177,8 +177,9 @@ typedef struct cuda_iter_face_api
 
 typedef void (*cuda_new_iter_face_t) (
   p4est_t* p4est,
+  char* ctx,
   size_t output_quads_count,
-  char *block_user_data,
+  unsigned char *block_user_data,
   unsigned char *block_quad_levels,
   cuda_light_face_side_t *sides
 );

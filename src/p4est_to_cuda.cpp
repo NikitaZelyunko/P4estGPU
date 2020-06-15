@@ -1428,7 +1428,20 @@ void mallocQuadrantsBlocks(cuda4est_t* cuda4est, sc_array_t* quadrants, p4est_qu
 
   size_t max_shared_memory_size = 0;
 
-  for(;quadrants_block_it != block_lengths.end(); quadrants_block_it++, faces_block_it++, output_quadrants_block_it++, block_lengths_config_cursor+=7) {
+  size_t test_block_index = 0;
+  for(;quadrants_block_it != block_lengths.end(); quadrants_block_it++, faces_block_it++, output_quadrants_block_it++, block_lengths_config_cursor+=7, test_block_index++) {
+
+    size_t quads_start_index = result_quads_length;
+    size_t quads_count = *quadrants_block_it;
+
+    size_t start_byte_index = result_quads_length * user_data_size;;
+    size_t quads_bytes_count = *quadrants_block_it * user_data_size;
+    
+    size_t output_quads_count = *output_quadrants_block_it;
+
+    size_t faces_start_index = result_faces_length;
+    size_t faces_count = *faces_block_it;
+
     block_lengths_config_cursor[0] = result_quads_length;
     block_lengths_config_cursor[1] = *quadrants_block_it;
     
@@ -1451,6 +1464,7 @@ void mallocQuadrantsBlocks(cuda4est_t* cuda4est, sc_array_t* quadrants, p4est_qu
   }
 
   quads_to_cuda->shared_memory_size = max_shared_memory_size;
+  printf("max_memory_size: %lu\n", max_shared_memory_size);
 
   unsigned char *quad_local_indexes = quad_is_used_in_block;
   for(size_t i = 0; i < quads_length; i++) {
@@ -1596,12 +1610,8 @@ void mallocQuadrantsBlocks(cuda4est_t* cuda4est, sc_array_t* quadrants, p4est_qu
   gpuErrchk(cudaMemcpy(d_light_sides, light_sides_for_cuda, sizeof(cuda_light_face_side_t) * result_faces_length * 2, cudaMemcpyHostToDevice));
   quads_to_cuda->d_light_sides = d_light_sides;
 
-  for(size_t i = 0; i < 323; i++) {
-    //printf("side-%d : which_face: %lu\n", i*2, light_sides_for_cuda[i * 2].face);
-    //printf("side-%d : which_face: %lu\n", i*2 + 1, light_sides_for_cuda[i * 2 + 1].face);
-  }
-
   free(light_sides_for_cuda);
+
 
   void* d_blocks_user_data;
   gpuErrchk(cudaMalloc((void**)&d_blocks_user_data, user_data_size * result_quads_length));

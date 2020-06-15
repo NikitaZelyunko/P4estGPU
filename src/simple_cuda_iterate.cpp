@@ -165,6 +165,7 @@ void simple_new_face_cuda_iterate(
 
   run_new_simple_faces_iterate(
     cuda4est->p4est_memory_allocate_info->d_p4est,
+    cuda4est->d_ctx,
     cuda4est->quads_to_cuda->block_count,
     cuda4est->quads_to_cuda->d_config_blocks,
     cuda4est->quads_to_cuda->d_blocks_user_data,

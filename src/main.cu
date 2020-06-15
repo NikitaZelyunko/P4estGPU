@@ -44,7 +44,9 @@
 using namespace std; 
 using namespace std::chrono; 
 
-const double difficulty = 1;
+const double difficulty = 0.001;
+
+__constant__ char cuda_ctx_ptr[sizeof(step3_ctx_t)];
 
  /** We had 1. / 0. here to create a NaN but that is not portable. */
  static const double step3_invalid = -1.;
@@ -1512,14 +1514,15 @@ __global__ void setup_step3_cuda_upwind_flux_kernel(cuda_iter_face_t *callback) 
 __device__ void
  step3_new_cuda_upwind_flux (
   p4est_t* p4est,
+  char* d_ctx,
   size_t output_quads_count,
-  char* block_user_data,
+  unsigned char* block_user_data,
   unsigned char* block_quad_levels,
   cuda_light_face_side_t* sides)
  {
   step3_data_t *quads_user_data = (step3_data_t *)block_user_data;
    int                 i, j;
-   step3_ctx_t        *ctx = (step3_ctx_t *) p4est->user_pointer;
+   step3_ctx_t        *ctx = (step3_ctx_t *) d_ctx;
    step3_data_t       *udata;
    unsigned char       quadid;
    double              vdotn = 0.;
@@ -2402,6 +2405,8 @@ void step3_ghost_data_alloc_cuda_memory(user_data_for_cuda_t* user_data_api) {
    ctx.refine_period = 2;
    ctx.repartition_period = 4;
    ctx.write_period = 8;
+
+
  
    /* Create a forest that consists of just one periodic quadtree/octree. */
  #ifndef P4_TO_P8
@@ -2442,6 +2447,12 @@ void step3_ghost_data_alloc_cuda_memory(user_data_for_cuda_t* user_data_api) {
   quad_user_data_api->download_all_quads_cuda_user_data_to_host = download_all_quads_cuda_user_data_to_host_t_step3;
 
   cuda4est->quad_user_data_api = quad_user_data_api;
+
+  gpuErrchk(cudaMemcpyToSymbol(cuda_ctx_ptr, &ctx, sizeof(step3_ctx_t)));
+  cuda4est->ctx_size = sizeof(step3_ctx_t);
+  gpuErrchk(cudaGetSymbolAddress((void**)&(cuda4est->d_ctx), cuda_ctx_ptr));
+  //cuda4est->d_ctx = cuda_ctx_ptr;
+  //gpuErrchk(cudaMemcpyFromSymbol(cuda4est->d_ctx, cuda_ctx_ptr, sizeof(char*)));
   
    /* *INDENT-ON* */
  
@@ -2464,8 +2475,8 @@ void step3_ghost_data_alloc_cuda_memory(user_data_for_cuda_t* user_data_api) {
    p4est_partition (p4est, partforcoarsen, NULL);
  
    /* time step */
-   step3_timestep (cuda4est, 1);
-   //step3_timestep (cuda4est, 0.01);
+   //step3_timestep (cuda4est, 1);
+   step3_timestep (cuda4est, 0.0003);
  
    /* Destroy the p4est and the connectivity structure. */
    p4est_destroy (p4est);

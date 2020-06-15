@@ -64,6 +64,7 @@
                                                 between writing vtk files */
  }
  step3_ctx_t;
+ 
 
 typedef struct step3_ctx_to_cuda
 {

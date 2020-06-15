@@ -79,6 +79,8 @@ typedef struct cuda4est {
     p4est_cuda_memory_allocate_info_t *p4est_memory_allocate_info;
     p4est_ghost_to_cuda_t *ghost_to_cuda;
     p4est_quadrants_to_cuda_t *quads_to_cuda;
+    char* d_ctx;
+    size_t ctx_size;
 } cuda4est_t;
 
 typedef struct p4est_quadrant_data_to_cuda {
