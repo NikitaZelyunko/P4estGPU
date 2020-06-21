@@ -81,6 +81,7 @@ typedef struct cuda4est {
     p4est_quadrants_to_cuda_t *quads_to_cuda;
     char* d_ctx;
     size_t ctx_size;
+    size_t block_quadrants_max_size;
 } cuda4est_t;
 
 typedef struct p4est_quadrant_data_to_cuda {
@@ -265,6 +266,8 @@ void freeMemoryForFacesSides(p4est_quadrants_to_cuda* quads_to_cuda);
 
 void mallocQuadrantsBlocks(cuda4est_t* cuda4est, sc_array_t* quadrants, p4est_quadrants_to_cuda* quads_to_cuda, p4est_ghost_t* Ghost_layer, p4est_ghost_to_cuda_t* ghost_to_cuda);
 void freeMemoryForQuadrantsBlocks(p4est_quadrants_to_cuda* quads_to_cuda);
+void update_quadrants_blocks(cuda4est_t *cuda4est);
+void download_user_data_from_blocks(cuda4est_t *cuda4est);
 
 typedef struct sc_array_cuda_memory_allocate_info {
     sc_array_t *d_sc_arr;
@@ -442,7 +445,6 @@ struct p4est_cuda_memory_allocate_info {
 
     p4est_connectivity_cuda_memory_allocate_info_t *d_connectivity_cuda_allocate_info;
     sc_array_cuda_memory_allocate_info_t *d_trees_cuda_allocate_info;
-    // sc_mempool_cuda_memory_allocate_info_t *d_user_data_pool_cuda_allocate_info;
     sc_mempool_t *d_user_data_pool;
     sc_mempool_cuda_memory_allocate_info_t *d_quadrant_pool_cuda_allocate_info;
     p4est_inspect_cuda_memory_allocate_info_t *d_inspect_cuda_allocate_info;
@@ -450,6 +452,8 @@ struct p4est_cuda_memory_allocate_info {
 
 p4est_cuda_memory_allocate_info_t* p4est_memory_alloc(cuda4est_t* cuda4est);
 void p4est_memory_free(p4est_cuda_memory_allocate_info_t* allocate_info, quad_user_data_api_t* user_data_api);
+
+
 
 
 extern "C" {

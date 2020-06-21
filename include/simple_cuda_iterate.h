@@ -26,7 +26,8 @@ extern "C" {
     void simple_new_face_cuda_iterate(
         cuda4est_t * cuda4est, p4est_ghost_t * ghost_layer,
         user_data_for_cuda_t *user_data_volume_cuda_api,
-        cuda_new_iter_face_api_t* iter_face_api
+        cuda_new_iter_face_api_t* iter_face_api,
+        cuda_new_iter_quad_api_t* iter_quad_api
     );
 
     void run_setup_kernel_volume_callback(cuda_iter_volume_api_t* iter_volume_api, cuda_iter_volume_t* d_callback);
@@ -46,14 +47,16 @@ extern "C" {
         void* user_data, cuda_iter_face_t iter_face,
         size_t faces_per_iter, size_t faces_per_thread, size_t needed_block_count, size_t threads_per_block);
     
-    void run_new_simple_faces_iterate(p4est_t* p4est, char* ctx,
+    void run_new_simple_faces_iterate(cuda4est_t* cuda4est, char* ctx,
         size_t block_count,
         size_t *block_config,
         void *blocks_user_data,
         unsigned char* quads_levels,
         cuda_light_face_side_t* sides,
         size_t shared_memory_size,
-        void* user_data, cuda_new_iter_face_t new_iter_face
+        void* user_data, 
+        cuda_new_iter_face_api_t *new_iter_face_api,
+        cuda_new_iter_quad_api_t *new_iter_quad_api
     );
 }
 

@@ -1241,7 +1241,7 @@ void mallocQuadrantsBlocks(cuda4est_t* cuda4est, sc_array_t* quadrants, p4est_qu
   p4est_iter_face_side_t* sides_array = all_faces.data();
   size_t faces_length = sides_count/2;
 
-  size_t block_max_quads_count = 128;
+  size_t block_max_quads_count = cuda4est->block_quadrants_max_size;
   const unsigned char sides_max_count = 8;
   const unsigned char faces_max_count = sides_max_count / 2;
   const unsigned char mask_bound[faces_max_count] = {1, 2, 4, 8};
@@ -1291,8 +1291,28 @@ void mallocQuadrantsBlocks(cuda4est_t* cuda4est, sc_array_t* quadrants, p4est_qu
       }
     }
   }
+if(quads_length == 64) {
+  printf("hello\n");
+  printf("first_quad_faces:\n");
+  for(size_t i = 0; i < faces_max_count; i++) {
+    printf("face_id: %d\n", quad_faces[i][53]);
+  }
+}
 
 
+/*
+  printf("0 udata->u: %f\n", ((step3_data_t*)p4est_quadrant_array_index(quadrants, 0)->p.user_data)->u);
+
+  printf("3 udata->u: %f\n", ((step3_data_t*)p4est_quadrant_array_index(quadrants, 3)->p.user_data)->u);
+  printf("1 udata->u: %f\n", ((step3_data_t*)p4est_quadrant_array_index(quadrants, 1)->p.user_data)->u);
+
+  printf("5 udata->u: %f\n", ((step3_data_t*)p4est_quadrant_array_index(quadrants, 5)->p.user_data)->u);
+  printf("6 udata->u: %f\n", ((step3_data_t*)p4est_quadrant_array_index(quadrants, 6)->p.user_data)->u);
+
+  printf("44 udata->u: %f\n", ((step3_data_t*)p4est_quadrant_array_index(quadrants, 44)->p.user_data)->u);
+  
+  printf("115 udata->u: %f\n", ((step3_data_t*)p4est_quadrant_array_index(quadrants, 115)->p.user_data)->u);
+*/
   unsigned char *quad_is_used_in_block = new unsigned char[quads_length];
   for(size_t i = 0; i < quads_length; i++) {
     quad_is_used_in_block[i] = 0;
@@ -1464,7 +1484,6 @@ void mallocQuadrantsBlocks(cuda4est_t* cuda4est, sc_array_t* quadrants, p4est_qu
   }
 
   quads_to_cuda->shared_memory_size = max_shared_memory_size;
-  printf("max_memory_size: %lu\n", max_shared_memory_size);
 
   unsigned char *quad_local_indexes = quad_is_used_in_block;
   for(size_t i = 0; i < quads_length; i++) {
@@ -1612,7 +1631,6 @@ void mallocQuadrantsBlocks(cuda4est_t* cuda4est, sc_array_t* quadrants, p4est_qu
 
   free(light_sides_for_cuda);
 
-
   void* d_blocks_user_data;
   gpuErrchk(cudaMalloc((void**)&d_blocks_user_data, user_data_size * result_quads_length));
   gpuErrchk(cudaMemcpy(d_blocks_user_data, user_data_for_blocks, user_data_size * result_quads_length, cudaMemcpyHostToDevice));
@@ -1641,6 +1659,64 @@ void freeMemoryForQuadrantsBlocks(p4est_quadrants_to_cuda* quads_to_cuda) {
   gpuErrchk(cudaFree(quads_to_cuda->d_blocks_user_data));
   gpuErrchk(cudaFree(quads_to_cuda->d_quads_levels));
   gpuErrchk(cudaFree(quads_to_cuda->d_light_sides));
+}
+
+void update_quadrants_blocks(cuda4est_t *cuda4est) {
+  size_t user_data_size = cuda4est->p4est->data_size;
+  size_t result_quads_length = cuda4est->quads_to_cuda->result_quads_length;
+  size_t user_data_in_blocks_bytes_count = result_quads_length * user_data_size;
+  void *user_data_from_cuda = (void*) malloc(user_data_in_blocks_bytes_count);
+  gpuErrchk(cudaMemcpy(user_data_from_cuda, cuda4est->quads_to_cuda->d_blocks_user_data, user_data_in_blocks_bytes_count, cudaMemcpyDeviceToHost));
+
+  size_t *not_valid_block_quad_global_index = cuda4est->quads_to_cuda->not_valid_block_quad_global_index;
+  size_t *valid_quad_index_in_result_quads = cuda4est->quads_to_cuda->valid_quad_index_in_result_quads;
+
+  size_t *blocks_configs = cuda4est->quads_to_cuda->config_blocks;
+  size_t blocks_count = cuda4est->quads_to_cuda->block_count;
+
+  cuda_config_blocks_t *blocks_configs_cursor = (cuda_config_blocks_t*)blocks_configs;
+  size_t not_valid_current_start_index = 0;
+  for(size_t i = 0; i < blocks_count; i++, blocks_configs_cursor++) {
+    size_t start_not_valid_index = blocks_configs_cursor->quads_start_index + blocks_configs_cursor->output_quads_count;
+    size_t not_valid_count = blocks_configs_cursor->quads_count - blocks_configs_cursor->output_quads_count;
+    size_t end_not_valid_index = not_valid_current_start_index + not_valid_count;
+    //printf("test_results_in_update:\n");
+    for(size_t j = 0; not_valid_current_start_index < end_not_valid_index; j++, not_valid_current_start_index++) {
+      //step3_data_t *user_data = (step3_data_t*)(user_data_from_cuda + valid_quad_index_in_result_quads[not_valid_block_quad_global_index[not_valid_current_start_index]] * user_data_size);
+      //printf("global_i: %d, local_i: %d, udata->dudt: %f\n", not_valid_block_quad_global_index[not_valid_current_start_index], not_valid_current_start_index, user_data->dudt);
+      memcpy(
+        user_data_from_cuda + (start_not_valid_index + j)* user_data_size,
+        user_data_from_cuda + valid_quad_index_in_result_quads[not_valid_block_quad_global_index[not_valid_current_start_index]] * user_data_size,
+        user_data_size
+      );
+    }
+  }
+
+  gpuErrchk(cudaMemcpy(cuda4est->quads_to_cuda->d_blocks_user_data, user_data_from_cuda, user_data_in_blocks_bytes_count, cudaMemcpyHostToDevice));
+}
+
+void download_user_data_from_blocks(cuda4est_t *cuda4est) {
+  sc_array *quadrants = &(p4est_tree_array_index(cuda4est->p4est->trees, cuda4est->p4est->first_local_tree)->quadrants);
+  size_t user_data_size = cuda4est->p4est->data_size;
+  size_t quads_count = cuda4est->quads_to_cuda->result_quads_length;
+  size_t block_count = cuda4est->quads_to_cuda->block_count;
+  cuda_config_blocks_t *config_blocks = (cuda_config_blocks_t*)cuda4est->quads_to_cuda->config_blocks;
+  size_t user_data_bytes_alloc = quads_count * user_data_size;
+
+  void* copied_user_data = (void*)malloc(user_data_bytes_alloc);
+  gpuErrchk(cudaMemcpy(copied_user_data, cuda4est->quads_to_cuda->d_blocks_user_data, user_data_bytes_alloc, cudaMemcpyDeviceToHost));
+  void *copied_user_data_cursor = (void*)copied_user_data;
+  size_t output_quad_index = 0;
+  
+  for(size_t i = 0; i < block_count; i++, config_blocks++) {
+    copied_user_data_cursor = copied_user_data + user_data_size * config_blocks->quads_start_index;
+    for(size_t j = 0; j < config_blocks->output_quads_count; j++, output_quad_index++, copied_user_data_cursor+=user_data_size) {
+      p4est_quadrant_t *quad = p4est_quadrant_array_index(quadrants, output_quad_index);
+      //printf("j: %d udata: %f\n", j, ((step3_data_t*)copied_user_data_cursor)->dudt);
+      memcpy(quad->p.user_data, copied_user_data_cursor, user_data_size);
+    }
+  }
+  free(copied_user_data);
 }
 
 p4est_ghost_to_cuda_t* mallocForGhost(p4est_t* p4est, p4est_ghost_t* ghost_layer) {
@@ -1857,13 +1933,10 @@ p4est_cuda_memory_allocate_info_t* p4est_memory_alloc(cuda4est_t* cuda4est) {
 
     // not copy user_data_mempool
     sc_mempool_t *d_user_data_pool;
-    //sc_mempool_cuda_memory_allocate_info_t *d_user_data_pool_memory_allocate_info = scMempoolMemoryAllocate(p4est->user_data_pool);
-    //sc_mempool_t *d_user_data_pool = d_user_data_pool_memory_allocate_info->d_mempool;
     gpuErrchk(cudaMalloc((void**)&d_user_data_pool, sizeof(sc_mempool_t)));
     gpuErrchk(cudaMemcpy(d_user_data_pool, p4est->user_data_pool, sizeof(sc_mempool_t), cudaMemcpyHostToDevice));
     gpuErrchk(cudaMemcpy(&(d_p4est->user_data_pool), &d_user_data_pool, sizeof(sc_mempool_t*), cudaMemcpyHostToDevice));
     p4est_allocate_info->d_user_data_pool = d_user_data_pool;
-    // p4est_allocate_info->d_user_data_pool_cuda_allocate_info = d_user_data_pool_memory_allocate_info;
 
     sc_mempool_cuda_memory_allocate_info_t *d_quadrant_pool_memory_allocate_info = scMempoolMemoryAllocate(p4est->quadrant_pool);
     sc_mempool_t *d_quadrant_pool = d_quadrant_pool_memory_allocate_info->d_mempool;

@@ -128,7 +128,8 @@ void simple_face_cuda_iterate(
 void simple_new_face_cuda_iterate(
     cuda4est_t * cuda4est, p4est_ghost_t * ghost_layer,
     user_data_for_cuda_t *user_data_volume_cuda_api,
-    cuda_new_iter_face_api_t* new_iter_face_api
+    cuda_new_iter_face_api_t* new_iter_face_api,
+    cuda_new_iter_quad_api_t* new_iter_quad_api
 ) {
   p4est_t *p4est = cuda4est->p4est;
   p4est_topidx_t      t;
@@ -164,7 +165,7 @@ void simple_new_face_cuda_iterate(
 
 
   run_new_simple_faces_iterate(
-    cuda4est->p4est_memory_allocate_info->d_p4est,
+    cuda4est,
     cuda4est->d_ctx,
     cuda4est->quads_to_cuda->block_count,
     cuda4est->quads_to_cuda->d_config_blocks,
@@ -172,15 +173,17 @@ void simple_new_face_cuda_iterate(
     cuda4est->quads_to_cuda->d_quads_levels,
     cuda4est->quads_to_cuda->d_light_sides,
     cuda4est->quads_to_cuda->shared_memory_size,
-    //d_user_data, (cuda_new_iter_face_t)h_callback
-    d_user_data, new_iter_face_api->callback
+    d_user_data, 
+    new_iter_face_api,
+    new_iter_quad_api
   );
   gpuErrchk(cudaDeviceSynchronize());
 
-  // TODO сделать обновление d_blocks_user_data
-
   user_data_volume_cuda_api->copy_user_data_from_device(user_data_volume_cuda_api);
   user_data_volume_cuda_api->free_cuda_memory(user_data_volume_cuda_api);
+  
+  // TODO сделать обновление d_blocks_user_data
+  //update_quadrants_blocks(cuda4est);
 
   // TODO удалить callback из памяти
 }

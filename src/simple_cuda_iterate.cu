@@ -135,15 +135,235 @@ step3_ctx_t;
 
 
 __global__ void
+simple_new_quads_and_faces_iterate(
+    p4est_t* p4est,
+    char* ctx,
+    size_t *block_configs,
+    char *blocks_user_data,
+    unsigned char* quads_levels,
+    cuda_light_face_side_t* sides,
+    void* user_data,
+    cuda_new_iter_face_t new_iter_face,
+    cuda_new_iter_quad_t new_iter_quad
+  )
+{ 
+  extern __shared__ char array[];
+
+  size_t *global_block_config = block_configs + blockIdx.x * 7;
+
+  size_t global_block_quads_start_index = global_block_config[0];
+  size_t global_block_quads_count = global_block_config[1];
+
+  size_t global_block_start_byte_index = global_block_config[2];
+  size_t global_block_quads_bytes_count = global_block_config[3];
+  
+  size_t global_block_output_quads_count = global_block_config[4];
+
+  size_t global_block_faces_start_index = global_block_config[5];
+  size_t global_block_faces_count = global_block_config[6];
+  
+  
+  unsigned char* block_user_data = (unsigned char*)array;
+  unsigned char* block_quads_levels = (unsigned char*)(global_block_quads_bytes_count + array); 
+  cuda_light_face_side_t *face_sides = (cuda_light_face_side_t*)(global_block_quads_bytes_count + global_block_quads_count + array);
+
+  /*
+  if(threadIdx.x == 0 && blockIdx.x == 8){
+    printf("[cuda] %d-block  %lu, %lu, %lu, %lu, %lu, %lu, %lu\n",
+      blockIdx.x,
+      global_block_quads_start_index,
+      global_block_quads_count,
+      global_block_start_byte_index,
+      global_block_quads_bytes_count,
+      global_block_output_quads_count,
+      global_block_faces_start_index,
+      global_block_faces_count
+    );
+  }
+  */
+  
+  
+  size_t faces_count = global_block_faces_count;
+  size_t faces_per_thread;
+  if(faces_count % blockDim.x) {
+    faces_per_thread = faces_count / blockDim.x + 1;
+  } else {
+    faces_per_thread = faces_count / blockDim.x;
+  }
+  
+  size_t quads_count = global_block_quads_count;
+  size_t quads_per_thread;
+  if(quads_count % blockDim.x) { 
+    quads_per_thread = quads_count / blockDim.x + 1;
+  } else {
+    quads_per_thread = quads_count / blockDim.x;
+  }
+
+  /*
+  if(threadIdx.x == 0 && blockIdx.x == 8){
+    printf("[cuda] %d-block faces_count: %lu, faces_per_thread: %lu\n",
+      blockIdx.x,
+      faces_count,
+      faces_per_thread
+    );
+  }
+  */
+
+  /*
+  if(threadIdx.x == 0 && blockIdx.x == 8) {
+    printf("0 - memory_size: %d\n", global_block_quads_bytes_count + global_block_quads_count + faces_count * sizeof(cuda_light_face_side_t) * 2);
+  }
+  */
+
+  /*
+  if(threadIdx.x == 0 && blockIdx.x == 1) {
+    printf("1 - memory_size: %d\n", global_block_quads_bytes_count + global_block_quads_count + faces_count * sizeof(cuda_light_face_side_t) * 2);
+  }
+  */
+  
+  
+  
+  int i = threadIdx.x;
+  size_t faces_remaining = 0;
+  size_t face_start_index = faces_per_thread * i;
+  if(face_start_index < faces_count){
+    faces_remaining = faces_count - face_start_index;
+    if(faces_remaining > faces_per_thread) {
+      faces_remaining = faces_per_thread;
+    }
+  }
+  size_t sides_start_index = (global_block_faces_start_index + face_start_index) * 2;
+  size_t local_start_index = face_start_index * 2;
+
+  /*
+  if(threadIdx.x == 16 && blockIdx.x == 8) {
+    if(faces_count == 30 && quads_count == 27) {
+      printf("[cuda] face_start_index %lu\n", face_start_index);
+      printf("[cuda] faces_remaining %lu\n", faces_remaining);
+      printf("[cuda] sides_start_index %lu\n", sides_start_index);
+      printf("[cuda] local_start_index %lu\n", local_start_index);
+    }
+  }
+  */
+
+  for(size_t j = 0; j < faces_remaining; j++) {
+    /*
+    if(blockIdx.x == 8) {
+      if(faces_count == 30 && quads_count == 27) {
+        printf("[cuda] side-%d: %lu\n", local_start_index, sides[2906].face);
+        printf("[cuda] side-%d: %lu\n", local_start_index + 1, sides[2907].face);
+      }
+    }
+    */
+    face_sides[local_start_index++] = sides[sides_start_index++];
+
+    face_sides[local_start_index++] = sides[sides_start_index++];
+
+    /*
+    if(blockIdx.x == 8) {
+      if(faces_count == 30 && quads_count == 27) {
+        printf("[cuda] face_side-%d: %lu\n", local_start_index, face_sides[32].face);
+        printf("[cuda] face_side-%d: %lu\n", local_start_index + 1, face_sides[33].face);
+      }
+    }
+    */
+  }
+  /*
+  if(blockIdx.x == 8) {
+    if(faces_count == 30 && quads_count == 27) {
+      printf("[cuda] threadid-%d side0: %lu side1: %lu face_side0: %lu face_side1: %lu\n",threadIdx.x, sides[2906].face, sides[2907].face, face_sides[32].face, face_sides[33].face);
+    }
+  }
+  */
+  size_t quads_remaining = 0;
+  size_t quad_start_index = quads_per_thread * i;
+  if(quad_start_index < quads_count){
+    quads_remaining = quads_count - quad_start_index;
+    if(quads_remaining > quads_per_thread) {
+      quads_remaining = quads_per_thread;
+    }
+  }
+  
+  size_t user_data_size = global_block_quads_bytes_count / global_block_quads_count;
+  size_t local_start_byte = quads_per_thread * user_data_size * i;
+  size_t quad_start_byte = global_block_start_byte_index + local_start_byte;
+  size_t global_level_start_index = global_block_quads_start_index + quad_start_index;
+  size_t current_quad_index = quad_start_index;
+/*
+  for(size_t j = 0; j < quads_remaining; j++) {
+    step3_data_t *udata = (step3_data_t*)(blocks_user_data + global_block_start_byte_index + (current_quad_index + j) * user_data_size);
+    printf("[cuda]-%d udata->u: %f udata->dudt: %f\n",quad_start_index + j, udata->u, udata->dudt);
+  }
+  */
+  for(size_t j = 0; j < quads_remaining; j++, quad_start_byte+=user_data_size, global_level_start_index++, current_quad_index++) {
+    size_t user_data_byte_end = quad_start_byte + user_data_size;
+    for(size_t byte_index = quad_start_byte; byte_index < user_data_byte_end; byte_index++, local_start_byte++) {
+      block_user_data[local_start_byte] = blocks_user_data[byte_index];
+    }
+    block_quads_levels[current_quad_index] = quads_levels[global_level_start_index];
+  }
+
+  __shared__ size_t output_quads_count;
+  output_quads_count = global_block_output_quads_count;
+  
+  __syncthreads();
+
+  for(unsigned char j = 0; j < quads_count; j++) {
+    new_iter_quad(
+      p4est,
+      ctx,
+      output_quads_count,
+      block_user_data,
+      block_quads_levels,
+      j
+    );
+  }
+  __syncthreads();
+  
+  size_t face_side_start_index = face_start_index * 2;
+  size_t sides_remaining = faces_remaining * 2;
+  for(size_t k = 0; k < 4; k++) {
+    for(size_t j = 0; j < sides_remaining; j+=2) {
+      if((face_sides + face_side_start_index + j)->face == k) {
+        new_iter_face(
+          p4est,
+          ctx,
+          output_quads_count,
+          block_user_data,
+          block_quads_levels,
+          face_sides + face_side_start_index + j
+        );
+      }
+    }
+    __syncthreads();
+  }
+
+  
+  user_data_size = global_block_quads_bytes_count / global_block_quads_count;
+  local_start_byte = quads_per_thread * user_data_size * i;
+  quad_start_byte = global_block_start_byte_index + local_start_byte;
+  current_quad_index = quad_start_index;
+
+  for(size_t j = 0; j < quads_remaining; j++, quad_start_byte+=user_data_size) {
+    size_t user_data_byte_end = quad_start_byte + user_data_size;
+    for(size_t byte_index = quad_start_byte; byte_index < user_data_byte_end; byte_index++, local_start_byte++) {
+      blocks_user_data[byte_index] = block_user_data[local_start_byte];
+    }
+  }
+
+}
+
+
+__global__ void
 simple_new_faces_iterate(
     p4est_t* p4est,
     char* ctx,
     size_t *block_configs,
-    void *blocks_user_data,
+    char *blocks_user_data,
     unsigned char* quads_levels,
     cuda_light_face_side_t* sides,
-    void* user_data, cuda_new_iter_face_t new_iter_face)
-{ 
+    void* user_data, cuda_new_iter_face_t new_iter_face) {
+  
   extern __shared__ char array[];
 
   size_t *global_block_config = block_configs + blockIdx.x * 7;
@@ -291,7 +511,7 @@ simple_new_faces_iterate(
   for(size_t j = 0; j < quads_remaining; j++, quad_start_byte+=user_data_size, local_start_byte+=user_data_size, global_level_start_index++, current_quad_index++) {
     size_t user_data_byte_end = quad_start_byte + user_data_size;
     for(size_t byte_index = quad_start_byte; byte_index < user_data_byte_end; byte_index++) {
-      block_user_data[local_start_byte] = (char)(blocks_user_data + byte_index);
+      block_user_data[local_start_byte] = blocks_user_data[byte_index];
     }
     block_quads_levels[current_quad_index] = quads_levels[global_level_start_index];
   }
@@ -313,17 +533,202 @@ simple_new_faces_iterate(
       face_sides + face_side_start_index + j
     );
   }
+  __syncthreads();
+  quad_start_byte = global_block_start_byte_index;
+  user_data_size = global_block_quads_bytes_count / global_block_quads_count;
+  local_start_byte = quads_per_thread * user_data_size * i;
+  global_level_start_index = global_block_quads_start_index + quad_start_index;
+  current_quad_index = quad_start_index;
+  for(size_t j = 0; j < quads_remaining; j++, quad_start_byte+=user_data_size, local_start_byte+=user_data_size, global_level_start_index++, current_quad_index++) {
+    size_t user_data_byte_end = quad_start_byte + user_data_size;
+    for(size_t byte_index = quad_start_byte; byte_index < user_data_byte_end; byte_index++) {
+      blocks_user_data[byte_index] = block_user_data[local_start_byte];
+    }
+  }
 }
 
-void run_new_simple_faces_iterate(p4est_t* p4est, char* ctx,
+__global__ void
+simple_new_quads_iterate(
+    p4est_t* p4est,
+    char* ctx,
+    size_t *block_configs,
+    char *blocks_user_data,
+    unsigned char* quads_levels,
+    void* user_data, cuda_new_iter_quad_t new_iter_quad) {
+    extern __shared__ char array[];
+
+    size_t *global_block_config = block_configs + blockIdx.x * 7;
+  
+    size_t global_block_quads_start_index = global_block_config[0];
+    size_t global_block_quads_count = global_block_config[1];
+  
+    size_t global_block_start_byte_index = global_block_config[2];
+    size_t global_block_quads_bytes_count = global_block_config[3];
+    
+    size_t global_block_output_quads_count = global_block_config[4];
+  
+    size_t global_block_faces_start_index = global_block_config[5];
+    size_t global_block_faces_count = global_block_config[6];
+    
+    
+    unsigned char* block_user_data = (unsigned char*)array;
+    unsigned char* block_quads_levels = (unsigned char*)(global_block_quads_bytes_count + array); 
+  
+    /*
+    if(threadIdx.x == 0 && blockIdx.x == 8){
+      printf("[cuda] %d-block  %lu, %lu, %lu, %lu, %lu, %lu, %lu\n",
+        blockIdx.x,
+        global_block_quads_start_index,
+        global_block_quads_count,
+        global_block_start_byte_index,
+        global_block_quads_bytes_count,
+        global_block_output_quads_count,
+        global_block_faces_start_index,
+        global_block_faces_count
+      );
+    }
+    */
+    
+    size_t quads_count = global_block_quads_count;
+    size_t quads_per_thread;
+    if(quads_count % blockDim.x) { 
+      quads_per_thread = quads_count / blockDim.x + 1;
+    } else {
+      quads_per_thread = quads_count / blockDim.x;
+    }
+  
+    /*
+    if(threadIdx.x == 0 && blockIdx.x == 8){
+      printf("[cuda] %d-block faces_count: %lu, faces_per_thread: %lu\n",
+        blockIdx.x,
+        faces_count,
+        faces_per_thread
+      );
+    }
+    */
+  
+    /*
+    if(threadIdx.x == 0 && blockIdx.x == 8) {
+      printf("0 - memory_size: %d\n", global_block_quads_bytes_count + global_block_quads_count + faces_count * sizeof(cuda_light_face_side_t) * 2);
+    }
+    */
+  
+    /*
+    if(threadIdx.x == 0 && blockIdx.x == 1) {
+      printf("1 - memory_size: %d\n", global_block_quads_bytes_count + global_block_quads_count + faces_count * sizeof(cuda_light_face_side_t) * 2);
+    }
+    */
+    
+    
+    
+    int i = threadIdx.x;
+  
+    /*
+    if(threadIdx.x == 16 && blockIdx.x == 8) {
+      if(faces_count == 30 && quads_count == 27) {
+        printf("[cuda] face_start_index %lu\n", face_start_index);
+        printf("[cuda] faces_remaining %lu\n", faces_remaining);
+        printf("[cuda] sides_start_index %lu\n", sides_start_index);
+        printf("[cuda] local_start_index %lu\n", local_start_index);
+      }
+    }
+    */
+
+    /*
+    if(blockIdx.x == 8) {
+      if(faces_count == 30 && quads_count == 27) {
+        printf("[cuda] threadid-%d side0: %lu side1: %lu face_side0: %lu face_side1: %lu\n",threadIdx.x, sides[2906].face, sides[2907].face, face_sides[32].face, face_sides[33].face);
+      }
+    }
+    */
+    size_t quads_remaining = 0;
+    size_t quad_start_index = quads_per_thread * i;
+    if(quad_start_index < quads_count){
+      quads_remaining = quads_count - quad_start_index;
+      if(quads_remaining > quads_per_thread) {
+        quads_remaining = quads_per_thread;
+      }
+    }
+    
+    size_t quad_start_byte = global_block_start_byte_index;
+    size_t user_data_size = global_block_quads_bytes_count / global_block_quads_count;
+    size_t local_start_byte = quads_per_thread * user_data_size * i;
+    size_t global_level_start_index = global_block_quads_start_index + quad_start_index;
+    size_t current_quad_index = quad_start_index;
+  
+    
+    for(size_t j = 0; j < quads_remaining; j++, quad_start_byte+=user_data_size, local_start_byte+=user_data_size, global_level_start_index++, current_quad_index++) {
+      size_t user_data_byte_end = quad_start_byte + user_data_size;
+      for(size_t byte_index = quad_start_byte; byte_index < user_data_byte_end; byte_index++) {
+        block_user_data[local_start_byte] = blocks_user_data[byte_index];
+      }
+      block_quads_levels[current_quad_index] = quads_levels[global_level_start_index];
+    }
+  
+    __shared__ size_t output_quads_count;
+    output_quads_count = global_block_output_quads_count;
+    
+    __syncthreads();
+
+    for(unsigned char j = 0; j < quads_count; j++) {
+      new_iter_quad(
+        p4est,
+        ctx,
+        output_quads_count,
+        block_user_data,
+        block_quads_levels,
+        j
+      );
+    }
+  __syncthreads();
+  quad_start_byte = global_block_start_byte_index;
+  user_data_size = global_block_quads_bytes_count / global_block_quads_count;
+  local_start_byte = quads_per_thread * user_data_size * i;
+  global_level_start_index = global_block_quads_start_index + quad_start_index;
+  current_quad_index = quad_start_index;
+  for(size_t j = 0; j < quads_remaining; j++, quad_start_byte+=user_data_size, local_start_byte+=user_data_size, global_level_start_index++, current_quad_index++) {
+    size_t user_data_byte_end = quad_start_byte + user_data_size;
+    for(size_t byte_index = quad_start_byte; byte_index < user_data_byte_end; byte_index++) {
+      blocks_user_data[byte_index] = block_user_data[local_start_byte];
+    }
+  }
+}
+
+void run_new_simple_faces_iterate(cuda4est_t* cuda4est, char* ctx,
   size_t block_count,
   size_t *block_configs,
   void *blocks_user_data,
   unsigned char* quads_levels,
   cuda_light_face_side_t* sides,
   size_t shared_memory_size,
-  void* user_data, cuda_new_iter_face_t new_iter_face
+  void* user_data, 
+  cuda_new_iter_face_api_t *new_iter_face_api,
+  cuda_new_iter_quad_api_t *new_iter_quad_api
 ){
-  simple_new_faces_iterate<<<block_count,128, shared_memory_size>>>(p4est, ctx, block_configs, blocks_user_data, quads_levels, sides, user_data, new_iter_face);
+
+  if(new_iter_face_api != NULL && new_iter_quad_api != NULL) {
+    simple_new_quads_and_faces_iterate<<<block_count,cuda4est->block_quadrants_max_size, shared_memory_size>>>(
+      cuda4est->p4est_memory_allocate_info->d_p4est, ctx,
+      block_configs, (char*)blocks_user_data,
+      quads_levels, sides,
+      user_data, new_iter_face_api->callback, new_iter_quad_api->callback
+    );
+  } else if(new_iter_face_api != NULL) {
+    simple_new_faces_iterate<<<block_count,cuda4est->block_quadrants_max_size, shared_memory_size>>>(
+      cuda4est->p4est_memory_allocate_info->d_p4est, ctx,
+      block_configs, (char*)blocks_user_data,
+      quads_levels, sides, 
+      user_data, new_iter_face_api->callback
+    );
+  } else if(new_iter_quad_api != NULL) {
+    simple_new_quads_iterate<<<block_count,cuda4est->block_quadrants_max_size, shared_memory_size>>>(
+      cuda4est->p4est_memory_allocate_info->d_p4est, ctx,
+      block_configs, (char*)blocks_user_data,
+      quads_levels,
+      user_data, new_iter_quad_api->callback
+    );
+  } else {
+    return;
+  }
   gpuErrchk(cudaDeviceSynchronize());
 }

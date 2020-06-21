@@ -44,7 +44,7 @@
 using namespace std; 
 using namespace std::chrono; 
 
-const double difficulty = 0.001;
+const double difficulty = 10;
 
 __constant__ char cuda_ctx_ptr[sizeof(step3_ctx_t)];
 
@@ -1384,6 +1384,24 @@ __global__ void setup_step3_cuda_quad_divergence_kernel(cuda_iter_volume_t *call
 }
 
 __device__ void
+step3_new_cuda_quad_divergence (
+  p4est_t* p4est,
+  char* ctx,
+  size_t output_quads_count,
+  unsigned char *block_user_data,
+  unsigned char *block_quad_levels,
+  unsigned char local_id
+)
+{
+  step3_data_t       *data = ((step3_data_t *) block_user_data) + local_id;
+  data->dudt = 0.;
+}
+
+__global__ void setup_step3_cuda_new_quad_divergence_kernel(cuda_new_iter_quad_t *callback) {
+  *callback = step3_new_cuda_quad_divergence;
+}
+
+__device__ void
  step3_cuda_upwind_flux (
   p4est_t* p4est,
   p4est_ghost_t* ghost_layer,
@@ -1569,12 +1587,14 @@ __device__ void
      /* there are 2^(d-1) (P4EST_HALF) subfaces */
      for (j = 0; j < P4EST_DEVICE_HALF; j++) {
         udata = (step3_data_t *) (quads_user_data + sides[upwindside].is.hanging.quadid[j]);
+        //printf("[cuda]: quadid: %d udata->u: %f\n", sides[upwindside].is.hanging.quadid[j], udata->u);
         uavg += udata->u;
      }
      uavg /= P4EST_DEVICE_HALF;
    }
    else {
      udata = (step3_data_t *) (quads_user_data + sides[upwindside].is.full.quadid);
+     //printf("[cuda]: quadid: %d udata->u: %f\n", sides[upwindside].is.full.quadid, udata->u);
      uavg = udata->u;
    }
    /* flux from side 0 to side 1 */
@@ -1612,6 +1632,7 @@ __device__ void
       udata->dudt += q * facearea * (i ? 1. : -1.);
      }
    }
+   //printf("[cuda] q: %f udata->dudt %f\n", q, udata->dudt);
 }
 __global__ void setup_step3_cuda_new_upwind_flux_kernel(cuda_new_iter_face_t *callback) {
   *callback = step3_new_cuda_upwind_flux;
@@ -1726,6 +1747,7 @@ void step3_ghost_data_alloc_cuda_memory(user_data_for_cuda_t* user_data_api) {
  }
 
  __device__ cuda_new_iter_face_t p_step3_new_cuda_upwind_flux = step3_new_cuda_upwind_flux;
+ __device__ cuda_new_iter_quad_t p_step3_new_cuda_quad_divergence = step3_new_cuda_quad_divergence;
  
  /** Timestep the advection problem.
   *
@@ -1821,6 +1843,10 @@ void step3_ghost_data_alloc_cuda_memory(user_data_for_cuda_t* user_data_api) {
   //step3_new_cuda_upwind_flux_api->callback = step3_new_cuda_upwind_flux;
   step3_new_cuda_upwind_flux_api->setup_kernel = setup_step3_cuda_new_upwind_flux_kernel;
   gpuErrchk(cudaMemcpyFromSymbol(&(step3_new_cuda_upwind_flux_api->callback), p_step3_new_cuda_upwind_flux, sizeof(cuda_new_iter_face_t)));
+
+  cuda_new_iter_quad_api_t *step3_new_cuda_quad_divergence_api = (cuda_new_iter_quad_api_t*)malloc(sizeof(cuda_new_iter_quad_api_t));
+  step3_new_cuda_quad_divergence_api->setup_kernel = setup_step3_cuda_new_quad_divergence_kernel;
+  gpuErrchk(cudaMemcpyFromSymbol(&(step3_new_cuda_quad_divergence_api->callback), p_step3_new_cuda_quad_divergence, sizeof(cuda_new_iter_quad_t)));
 
    /* create the ghost quadrants */
    ghost = p4est_ghost_new (p4est, P4EST_CONNECT_FULL);
@@ -2122,8 +2148,20 @@ void step3_ghost_data_alloc_cuda_memory(user_data_for_cuda_t* user_data_api) {
     // quadrants memory reallocation end
      /* compute du/dt */
      /* *INDENT-OFF* */
-    //downloadQuadrantsFromCuda(quads_to_cuda, quadrants, cuda4est->quad_user_data_api);
-    
+    downloadQuadrantsFromCuda(quads_to_cuda, quadrants, cuda4est->quad_user_data_api);
+    freeMemoryForQuadrants(quads_to_cuda, cuda4est->quad_user_data_api);
+    tree = p4est_tree_array_index (trees, p4est->first_local_tree);
+    quadrants = &(tree->quadrants);
+    quads_to_cuda = mallocForQuadrants(cuda4est, quadrants, cuda4est->quad_user_data_api);
+    cuda4est->quads_to_cuda = quads_to_cuda;
+    mallocFacesSides(cuda4est, quadrants, quads_to_cuda, ghost, malloc_ghost);
+    mallocQuadrantsBlocks(cuda4est, quadrants, quads_to_cuda, ghost, malloc_ghost);
+
+    //printf("udata_before:\n");
+    //for(size_t i = 0; i < quadrants->elem_count; i++) {
+    //  p4est_quadrant_t *quad = p4est_quadrant_array_index(quadrants, i);
+    //  printf("%d: u: %f\n",i, ((step3_data_t*)quad->p.user_data)->u);
+    //}
     start = clock();
     cuda_iterate (cuda4est, ghost,
       (void *) ghost_data, 
@@ -2139,7 +2177,16 @@ void step3_ghost_data_alloc_cuda_memory(user_data_for_cuda_t* user_data_api) {
     stop = clock();
     duration = (double)(stop - start) / CLOCKS_PER_SEC; 
     flux_compute_running+=duration;
-
+    downloadQuadrantsFromCuda(quads_to_cuda, quadrants, cuda4est->quad_user_data_api);
+    double *test_arr_before = new double[quadrants->elem_count];
+    for(size_t i = 0; i < quadrants->elem_count; i++) {
+      p4est_quadrant_t *quad = p4est_quadrant_array_index(quadrants, i);
+      test_arr_before[i] = ((step3_data_t*)quad->p.user_data)->dudt;
+    }
+    
+    //downloadQuadrantsFromCuda(quads_to_cuda, quadrants, cuda4est->quad_user_data_api);
+    //freeMemoryForQuadrantsBlocks(quads_to_cuda);
+    //mallocQuadrantsBlocks(cuda4est, quadrants, quads_to_cuda, ghost, malloc_ghost);
     start = clock();
     cuda_iterate_new (cuda4est, ghost,
       (void *) ghost_data, 
@@ -2148,7 +2195,8 @@ void step3_ghost_data_alloc_cuda_memory(user_data_for_cuda_t* user_data_api) {
       step3_cuda_quad_divergence_api,
       step3_upwind_flux,
       step3_cuda_upwind_flux_api,
-      step3_new_cuda_upwind_flux_api,   
+      step3_new_cuda_upwind_flux_api,
+      step3_new_cuda_quad_divergence_api,   
 #ifdef P4_TO_P8
       NULL,    
 #endif
@@ -2156,6 +2204,28 @@ void step3_ghost_data_alloc_cuda_memory(user_data_for_cuda_t* user_data_api) {
     stop = clock();
     duration = (double)(stop - start) / CLOCKS_PER_SEC; 
     new_flux_compute_running+=duration;
+
+    download_user_data_from_blocks(cuda4est);
+    
+    
+    double *test_arr_after = new double[quadrants->elem_count];
+    for(size_t i = 0; i < quadrants->elem_count; i++) {
+      p4est_quadrant_t *quad = p4est_quadrant_array_index(quadrants, i);
+      test_arr_after[i] = ((step3_data_t*)quad->p.user_data)->dudt;
+    }
+
+    for(size_t i = 0; i < quadrants->elem_count; i++) {
+      printf("%d: %f\n", i, test_arr_before[i] - test_arr_after[i]);
+    }
+    
+
+    freeMemoryForQuadrants(quads_to_cuda, cuda4est->quad_user_data_api);
+    tree = p4est_tree_array_index (trees, p4est->first_local_tree);
+    quadrants = &(tree->quadrants);
+    quads_to_cuda = mallocForQuadrants(cuda4est, quadrants, cuda4est->quad_user_data_api);
+    cuda4est->quads_to_cuda = quads_to_cuda;
+    mallocFacesSides(cuda4est, quadrants, quads_to_cuda, ghost, malloc_ghost);
+    mallocQuadrantsBlocks(cuda4est, quadrants, quads_to_cuda, ghost, malloc_ghost);
     
     //cout << "Time taken by cuda_iterate: "
     //     << duration << " seconds" << endl;  
@@ -2451,8 +2521,7 @@ void step3_ghost_data_alloc_cuda_memory(user_data_for_cuda_t* user_data_api) {
   gpuErrchk(cudaMemcpyToSymbol(cuda_ctx_ptr, &ctx, sizeof(step3_ctx_t)));
   cuda4est->ctx_size = sizeof(step3_ctx_t);
   gpuErrchk(cudaGetSymbolAddress((void**)&(cuda4est->d_ctx), cuda_ctx_ptr));
-  //cuda4est->d_ctx = cuda_ctx_ptr;
-  //gpuErrchk(cudaMemcpyFromSymbol(cuda4est->d_ctx, cuda_ctx_ptr, sizeof(char*)));
+  cuda4est->block_quadrants_max_size = 128;
   
    /* *INDENT-ON* */
  
@@ -2475,8 +2544,9 @@ void step3_ghost_data_alloc_cuda_memory(user_data_for_cuda_t* user_data_api) {
    p4est_partition (p4est, partforcoarsen, NULL);
  
    /* time step */
-   //step3_timestep (cuda4est, 1);
-   step3_timestep (cuda4est, 0.0003);
+   step3_timestep (cuda4est, 0.8);
+   //step3_timestep (cuda4est, 0.0003);
+   //step3_timestep(cuda4est, 0.003);
  
    /* Destroy the p4est and the connectivity structure. */
    p4est_destroy (p4est);
