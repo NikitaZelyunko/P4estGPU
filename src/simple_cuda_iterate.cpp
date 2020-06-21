@@ -154,36 +154,43 @@ void simple_new_face_cuda_iterate(
   size_t threads_per_block = 128;
   // constants
 
-  size_t blocks_count = cuda4est->quads_to_cuda->block_count;
+  //size_t blocks_count = 0;//cuda4est->quads_to_cuda->block_count;
 
+  size_t iteration_count = cuda4est->quads_to_cuda->faces_iteration_count;
+  size_t *faces_count_per_iter = cuda4est->quads_to_cuda->faces_per_iter;
   
   // TODO положить callback в константную память
   //unsigned long long *d_callback, h_callback;
   //gpuErrchk(cudaMalloc((void**)&d_callback, sizeof(unsigned long long)));
   //run_setup_new_kernel_face_callback(new_iter_face_api, (cuda_new_iter_face_t*)d_callback);
   //gpuErrchk(cudaMemcpy(&h_callback, d_callback, sizeof(unsigned long long), cudaMemcpyDeviceToHost));
+  size_t current_blocks_count = 0;
+  for(size_t i = 0, start_index = 0; i < iteration_count; start_index+=faces_count_per_iter[i], i++) {
+    size_t iter_faces_count = faces_count_per_iter[i] / 2;
+    // calculate init cuda dimensions
+    size_t min_faces_per_thread = (double)(iter_faces_count / threads_per_block) / (max_block_count_per_process - 1)  + 1;
+    size_t needed_block_count = iter_faces_count / (min_faces_per_thread * threads_per_block) + 1;
+    size_t blocks_count = cuda4est->quads_to_cuda->blocks_count_in_iter[i];
 
-
-  run_new_simple_faces_iterate(
-    cuda4est,
-    cuda4est->d_ctx,
-    cuda4est->quads_to_cuda->block_count,
-    cuda4est->quads_to_cuda->d_config_blocks,
-    cuda4est->quads_to_cuda->d_blocks_user_data,
-    cuda4est->quads_to_cuda->d_quads_levels,
-    cuda4est->quads_to_cuda->d_light_sides,
-    cuda4est->quads_to_cuda->shared_memory_size,
-    d_user_data, 
-    new_iter_face_api,
-    new_iter_quad_api
-  );
-  gpuErrchk(cudaDeviceSynchronize());
+    run_new_simple_faces_iterate(cuda4est, cuda4est->d_ctx,
+      blocks_count,
+      cuda4est->quads_to_cuda->d_config_blocks + current_blocks_count,
+      (void*)cuda4est->quads_to_cuda->all_quads_user_data_allocate_info->d_all_quads_user_data,
+      cuda4est->quads_to_cuda->d_global_indexes,
+      cuda4est->quads_to_cuda->d_quads_levels,
+      cuda4est->quads_to_cuda->d_light_sides + start_index,
+      cuda4est->quads_to_cuda->shared_memory_size[i],
+      d_user_data, 
+      new_iter_face_api,
+      new_iter_quad_api
+    );
+    gpuErrchk(cudaDeviceSynchronize());
+    current_blocks_count+=blocks_count;
+  }
 
   user_data_volume_cuda_api->copy_user_data_from_device(user_data_volume_cuda_api);
   user_data_volume_cuda_api->free_cuda_memory(user_data_volume_cuda_api);
-  
-  // TODO сделать обновление d_blocks_user_data
-  //update_quadrants_blocks(cuda4est);
+
 
   // TODO удалить callback из памяти
 }

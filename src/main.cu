@@ -44,7 +44,7 @@
 using namespace std; 
 using namespace std::chrono; 
 
-const double difficulty = 10;
+const double difficulty = 1;
 
 __constant__ char cuda_ctx_ptr[sizeof(step3_ctx_t)];
 
@@ -2205,7 +2205,6 @@ void step3_ghost_data_alloc_cuda_memory(user_data_for_cuda_t* user_data_api) {
     duration = (double)(stop - start) / CLOCKS_PER_SEC; 
     new_flux_compute_running+=duration;
 
-    download_user_data_from_blocks(cuda4est);
     
     
     double *test_arr_after = new double[quadrants->elem_count];
@@ -2215,7 +2214,7 @@ void step3_ghost_data_alloc_cuda_memory(user_data_for_cuda_t* user_data_api) {
     }
 
     for(size_t i = 0; i < quadrants->elem_count; i++) {
-      printf("%d: %f\n", i, test_arr_before[i] - test_arr_after[i]);
+      //printf("%d: %f\n", i, test_arr_before[i] - test_arr_after[i]);
     }
     
 

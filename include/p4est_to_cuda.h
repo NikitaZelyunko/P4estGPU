@@ -190,6 +190,27 @@ typedef struct cuda_light_face_side
 }
 cuda_light_face_side_t;
 
+typedef struct cuda_next_light_face_side
+{     
+  unsigned char       face;            
+  unsigned char       is_hanging;
+  union cuda_next_light_face_side_data
+  {
+    struct
+    {
+      unsigned int quadid;
+    }
+    full;
+    struct
+    {
+      unsigned int quadid[2];
+    }
+    hanging;
+  }
+  is;
+}
+cuda_next_light_face_side_t;
+
 typedef struct cuda_config_blocks {
     size_t quads_start_index;
     size_t quads_count;
@@ -202,6 +223,15 @@ typedef struct cuda_config_blocks {
     size_t faces_start_index;
     size_t faces_count;
 } cuda_config_blocks_t;
+
+typedef struct cuda_new_faces_config_blocks {
+    size_t global_index_quad_start;
+    size_t global_index_count;
+
+    size_t faces_start_index;
+    size_t faces_count;
+} cuda_new_faces_config_blocks_t;
+
 
 struct p4est_quadrants_to_cuda
 {
@@ -217,16 +247,12 @@ struct p4est_quadrants_to_cuda
     size_t *faces_per_iter; // array faces_iteration_count length
     all_quads_user_data_allocate_info_t * all_quads_user_data_allocate_info;
 
-    size_t block_count;
-    size_t *config_blocks;
-    size_t *d_config_blocks;
-    size_t *not_valid_block_quad_global_index;
-    size_t *valid_quad_index_in_result_quads;
-    cuda_light_face_side_t *d_light_sides;
-    void *d_blocks_user_data;
+    size_t *blocks_count_in_iter;
+    cuda_new_faces_config_blocks_t *d_config_blocks;
+    cuda_next_light_face_side_t *d_light_sides;
     unsigned char* d_quads_levels;
-    size_t result_quads_length;
-    size_t shared_memory_size;
+    size_t *d_global_indexes;
+    size_t *shared_memory_size;
 };
 
 p4est_quadrants_to_cuda* mallocForQuadrants(cuda4est_t* cuda4est, sc_array_t* quadrants, quad_user_data_api_t *user_data_api);
