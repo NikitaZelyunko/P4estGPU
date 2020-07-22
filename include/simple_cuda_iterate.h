@@ -52,7 +52,6 @@ extern "C" {
         cuda_new_faces_config_blocks_t *block_configs,
         void* quads_data,
         size_t *global_indexes,
-        unsigned char* quads_levels,
         cuda_next_light_face_side_t* sides,
         size_t shared_memory_size,
         void* user_data, 

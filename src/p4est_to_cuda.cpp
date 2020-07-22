@@ -1089,13 +1089,16 @@ void mallocQuadrantsBlocks(cuda4est_t* cuda4est, sc_array_t* quadrants, p4est_qu
 
   size_t block_count = 0;
 
+  /*
   for(size_t i = 0; i < faces_iteration_count; i++) {
     printf("load: %d\n", load_per_iteration[i]);
   }
+  */
   
   size_t max_quads_per_block = 384; // для 32 байтных пользовательских данных
   size_t max_faces_per_block = 121 * 3;
-  size_t max_load_per_block = 153 * 2;
+  //size_t max_load_per_block = 145 * 2;
+  size_t max_load_per_block = 128 * 2;
   size_t iter_block_count = 0;
 
   unsigned int empty_local_index = -1;
@@ -1105,7 +1108,7 @@ void mallocQuadrantsBlocks(cuda4est_t* cuda4est, sc_array_t* quadrants, p4est_qu
   }
 
   std::vector<size_t> quad_global_indexes;
-  std::vector<unsigned char> quads_global_levels;
+  //std::vector<unsigned char> quads_global_levels;
   size_t block_load = 0;
   size_t current_quad_local_index = 0;
   size_t global_indexes_start_index = 0;
@@ -1122,13 +1125,13 @@ void mallocQuadrantsBlocks(cuda4est_t* cuda4est, sc_array_t* quadrants, p4est_qu
   }
 
   for(size_t iter_index = 0; iter_index < faces_iteration_count; iter_index++) {
+    size_t real_block_count = 0;
     if(load_per_iteration[iter_index] % max_load_per_block) {
       iter_block_count = load_per_iteration[iter_index] / max_load_per_block + 1;
     } else {
       iter_block_count = load_per_iteration[iter_index] / max_load_per_block;
     }
     faces_config_blocks[iter_index] = new cuda_new_faces_config_blocks[iter_block_count];
-    blocks_count[iter_index] = iter_block_count;
 
     size_t faces_end_index = faces_per_iteration[iter_index] / 2;
     size_t faces_block_start = 0;
@@ -1138,40 +1141,51 @@ void mallocQuadrantsBlocks(cuda4est_t* cuda4est, sc_array_t* quadrants, p4est_qu
       for(size_t j = 0; j < 2; j++) {
         p4est_iter_face_side_t *side = sorted_face_sides + (faces_start_index + i)*2 + j;
         cuda_next_light_face_side_t *light_side = light_sides_for_cuda + (faces_start_index + i)*2 + j;
-        light_side->is_hanging = side->is_hanging;
         light_side->face = side->face;
         if(side->is_hanging) {
+          light_side->is_hanging = 1;
           p4est_locidx_t left = side->is.hanging.quadid[0];
           if(quad_local_indexes[left] != empty_local_index) {
-            light_side->is.hanging.quadid[0] = quad_local_indexes[left];
+            //light_side->is.hanging.quadid[0] = quad_local_indexes[left];
+            light_side->quadid[0] = quad_local_indexes[left];
           } else {
             quad_global_indexes.push_back(left);
-            quads_global_levels.push_back(side->is.hanging.quad[0]->level);
-            light_side->is.hanging.quadid[0] = quad_local_indexes[left] = current_quad_local_index++;
+            //quads_global_levels.push_back(side->is.hanging.quad[0]->level);
+            light_side->levels[0] = side->is.hanging.quad[0]->level;
+            //light_side->is.hanging.quadid[0] = quad_local_indexes[left] = current_quad_local_index++;
+            light_side->quadid[0] = quad_local_indexes[left] = current_quad_local_index++;
           }
           p4est_locidx_t right = side->is.hanging.quadid[1];
           if(quad_local_indexes[right] != empty_local_index) {
-            light_side->is.hanging.quadid[1] = quad_local_indexes[right];
+            //light_side->is.hanging.quadid[1] = quad_local_indexes[right];
+            light_side->quadid[1] = quad_local_indexes[right];
           } else {
             quad_global_indexes.push_back(right);
-            quads_global_levels.push_back(side->is.hanging.quad[1]->level);
-            light_side->is.hanging.quadid[1] = quad_local_indexes[right] = current_quad_local_index++;
+            //quads_global_levels.push_back(side->is.hanging.quad[1]->level);
+            light_side->levels[1] = side->is.hanging.quad[1]->level;
+            //light_side->is.hanging.quadid[1] = quad_local_indexes[right] = current_quad_local_index++;
+            light_side->quadid[1] = quad_local_indexes[right] = current_quad_local_index++;
           }
           block_load+=2;
         } else {
+          light_side->is_hanging = 0;
           p4est_locidx_t quadid = side->is.full.quadid;
           if(quad_local_indexes[quadid] != empty_local_index) {
-            light_side->is.full.quadid = quad_local_indexes[quadid];
+            //light_side->is.full.quadid = quad_local_indexes[quadid];
+            light_side->quadid[0] = quad_local_indexes[quadid];
           } else {
             quad_global_indexes.push_back(quadid);
-            quads_global_levels.push_back(side->is.full.quad->level);
-            light_side->is.full.quadid = quad_local_indexes[quadid] = current_quad_local_index++;
+            //quads_global_levels.push_back(side->is.full.quad->level);
+            light_side->levels[0] = side->is.full.quad->level;
+            //light_side->is.full.quadid = quad_local_indexes[quadid] = current_quad_local_index++;
+            light_side->quadid[0] = quad_local_indexes[quadid] = current_quad_local_index++;
           }
           block_load++;
         }
       }
       
       if(block_load >= max_load_per_block) {
+        real_block_count++;
         cuda_new_faces_config_blocks *config_block = &(faces_config_blocks[iter_index][current_block_index]);
         current_block_index++;
         config_block->faces_start_index = faces_block_start;
@@ -1187,7 +1201,6 @@ void mallocQuadrantsBlocks(cuda4est_t* cuda4est, sc_array_t* quadrants, p4est_qu
         size_t shared_memory_size_needed = 
         config_block->global_index_count * user_data_size + 
         config_block->faces_count * 2 * sizeof(cuda_next_light_face_side_t)+
-        config_block->global_index_count * sizeof(unsigned char)+
         config_block->global_index_count * sizeof(size_t);
 
         block_load = 0;
@@ -1206,6 +1219,7 @@ void mallocQuadrantsBlocks(cuda4est_t* cuda4est, sc_array_t* quadrants, p4est_qu
       }
     }
     if(block_load != 0 && block_load < max_load_per_block) {
+        real_block_count++;
         cuda_new_faces_config_blocks *config_block = &(faces_config_blocks[iter_index][current_block_index]);
         current_block_index++;
         config_block->faces_start_index = faces_block_start;
@@ -1234,6 +1248,7 @@ void mallocQuadrantsBlocks(cuda4est_t* cuda4est, sc_array_t* quadrants, p4est_qu
           quad_local_indexes[i] = -1;
         }
     }
+    blocks_count[iter_index] = real_block_count;
     faces_start_index += faces_end_index;
   }
 
@@ -1242,8 +1257,8 @@ void mallocQuadrantsBlocks(cuda4est_t* cuda4est, sc_array_t* quadrants, p4est_qu
   size_t *quad_global_indexes_arr = quad_global_indexes.data();
   size_t quad_global_indexes_size = quad_global_indexes.size();
 
-  unsigned char * quads_global_levels_arr = quads_global_levels.data();
-  size_t quads_global_levels_size = quads_global_levels.size();
+  //unsigned char * quads_global_levels_arr = quads_global_levels.data();
+  //size_t quads_global_levels_size = quads_global_levels.size();
 
 
   cuda_next_light_face_side_t* d_light_sides;
@@ -1256,10 +1271,10 @@ void mallocQuadrantsBlocks(cuda4est_t* cuda4est, sc_array_t* quadrants, p4est_qu
   gpuErrchk(cudaMalloc((void**)&d_global_indexes, global_indexes_bytes_alloc));
   gpuErrchk(cudaMemcpy(d_global_indexes, quad_global_indexes_arr, global_indexes_bytes_alloc, cudaMemcpyHostToDevice));
 
-  unsigned char *d_global_levels;
-  size_t levels_bytes_alloc = quads_global_levels_size * sizeof(unsigned char);
-  gpuErrchk(cudaMalloc((void**)&d_global_levels, levels_bytes_alloc));
-  gpuErrchk(cudaMemcpy(d_global_levels, quads_global_levels_arr, levels_bytes_alloc, cudaMemcpyHostToDevice));
+  //unsigned char *d_global_levels;
+  //size_t levels_bytes_alloc = quads_global_levels_size * sizeof(unsigned char);
+  //gpuErrchk(cudaMalloc((void**)&d_global_levels, levels_bytes_alloc));
+  //gpuErrchk(cudaMemcpy(d_global_levels, quads_global_levels_arr, levels_bytes_alloc, cudaMemcpyHostToDevice));
 
   size_t result_blocks_count = 0;
   for(size_t i = 0; i < faces_iteration_count; i++) {
@@ -1282,7 +1297,7 @@ void mallocQuadrantsBlocks(cuda4est_t* cuda4est, sc_array_t* quadrants, p4est_qu
 
   quads_to_cuda->d_config_blocks = d_config_blocks;
   quads_to_cuda->d_light_sides = d_light_sides;
-  quads_to_cuda->d_quads_levels = d_global_levels;
+  //quads_to_cuda->d_quads_levels = d_global_levels;
   quads_to_cuda->d_global_indexes = d_global_indexes;
   quads_to_cuda->shared_memory_size = max_shared_memory_size_per_iter;
   quads_to_cuda->blocks_count_in_iter = blocks_count;
@@ -1302,7 +1317,6 @@ void freeMemoryForQuadrantsBlocks(p4est_quadrants_to_cuda* quads_to_cuda) {
   free(quads_to_cuda->blocks_count_in_iter);
 
   gpuErrchk(cudaFree(quads_to_cuda->d_config_blocks));
-  gpuErrchk(cudaFree(quads_to_cuda->d_quads_levels));
   gpuErrchk(cudaFree(quads_to_cuda->d_light_sides));
   gpuErrchk(cudaFree(quads_to_cuda->d_global_indexes));
 }

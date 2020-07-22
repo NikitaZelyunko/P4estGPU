@@ -177,7 +177,6 @@ void simple_new_face_cuda_iterate(
       cuda4est->quads_to_cuda->d_config_blocks + current_blocks_count,
       (void*)cuda4est->quads_to_cuda->all_quads_user_data_allocate_info->d_all_quads_user_data,
       cuda4est->quads_to_cuda->d_global_indexes,
-      cuda4est->quads_to_cuda->d_quads_levels,
       cuda4est->quads_to_cuda->d_light_sides + start_index,
       cuda4est->quads_to_cuda->shared_memory_size[i],
       d_user_data, 

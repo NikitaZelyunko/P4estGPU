@@ -180,8 +180,7 @@ typedef void (*cuda_new_iter_face_t) (
   char* ctx,
   size_t output_quads_count,
   unsigned char *block_user_data,
-  unsigned char *block_quad_levels,
-  cuda_light_face_side_t *sides
+  cuda_next_light_face_side_t *sides
 );
 
 typedef void (*cuda_new_iter_face_setup_kernel_t)(cuda_new_iter_face_t *callback);
@@ -197,7 +196,6 @@ typedef void(*cuda_new_iter_quad_t) (
   char* ctx,
   size_t output_quads_count,
   unsigned char *block_user_data,
-  unsigned char *block_quad_levels,
   unsigned char local_id
 );
 

@@ -194,6 +194,10 @@ typedef struct cuda_next_light_face_side
 {     
   unsigned char       face;            
   unsigned char       is_hanging;
+  unsigned char       levels[2];
+  unsigned int        buffer;
+  unsigned int        quadid[2];
+  /*
   union cuda_next_light_face_side_data
   {
     struct
@@ -208,6 +212,7 @@ typedef struct cuda_next_light_face_side
     hanging;
   }
   is;
+  */
 }
 cuda_next_light_face_side_t;
 
@@ -250,7 +255,6 @@ struct p4est_quadrants_to_cuda
     size_t *blocks_count_in_iter;
     cuda_new_faces_config_blocks_t *d_config_blocks;
     cuda_next_light_face_side_t *d_light_sides;
-    unsigned char* d_quads_levels;
     size_t *d_global_indexes;
     size_t *shared_memory_size;
 };

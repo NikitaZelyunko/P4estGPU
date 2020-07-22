@@ -44,7 +44,7 @@
 using namespace std; 
 using namespace std::chrono; 
 
-const double difficulty = 1;
+const double difficulty = 0.0005;
 
 __constant__ char cuda_ctx_ptr[sizeof(step3_ctx_t)];
 
@@ -1389,7 +1389,6 @@ step3_new_cuda_quad_divergence (
   char* ctx,
   size_t output_quads_count,
   unsigned char *block_user_data,
-  unsigned char *block_quad_levels,
   unsigned char local_id
 )
 {
@@ -1535,8 +1534,7 @@ __device__ void
   char* d_ctx,
   size_t output_quads_count,
   unsigned char* block_user_data,
-  unsigned char* block_quad_levels,
-  cuda_light_face_side_t* sides)
+  cuda_next_light_face_side_t* sides)
  {
   step3_data_t *quads_user_data = (step3_data_t *)block_user_data;
    int                 i, j;
@@ -1586,14 +1584,16 @@ __device__ void
    if (sides[upwindside].is_hanging) {
      /* there are 2^(d-1) (P4EST_HALF) subfaces */
      for (j = 0; j < P4EST_DEVICE_HALF; j++) {
-        udata = (step3_data_t *) (quads_user_data + sides[upwindside].is.hanging.quadid[j]);
+        udata = (step3_data_t *) (quads_user_data + sides[upwindside].quadid[j]);
         //printf("[cuda]: quadid: %d udata->u: %f\n", sides[upwindside].is.hanging.quadid[j], udata->u);
+        //printf("[cuda]: quadid: %lu\n", sides[upwindside].is.hanging.quadid[j]);
+        //printf("[cuda]: quadid: %lu\n", sides[upwindside].quadid[j]);
         uavg += udata->u;
      }
      uavg /= P4EST_DEVICE_HALF;
    }
    else {
-     udata = (step3_data_t *) (quads_user_data + sides[upwindside].is.full.quadid);
+     udata = (step3_data_t *) (quads_user_data + sides[upwindside].quadid[0]);
      //printf("[cuda]: quadid: %d udata->u: %f\n", sides[upwindside].is.full.quadid, udata->u);
      uavg = udata->u;
    }
@@ -1603,9 +1603,9 @@ __device__ void
      if (sides[i].is_hanging) {
        /* there are 2^(d-1) (P4EST_HALF) subfaces */
        for (j = 0; j < P4EST_DEVICE_HALF; j++) {
-        quadid = sides[i].is.hanging.quadid[j];
-         h =
-           (double) P4EST_DEVICE_QUADRANT_LEN (block_quad_levels[quadid]) / (double) P4EST_DEVICE_ROOT_LEN;
+        quadid = sides[i].quadid[j];
+        h =
+          (double) P4EST_DEVICE_QUADRANT_LEN (sides[i].levels[j]) / (double) P4EST_DEVICE_ROOT_LEN;
  #ifndef P4_TO_P8
          facearea = h;
  #else
@@ -1621,8 +1621,8 @@ __device__ void
        }
      }
      else {
-       quadid = sides[i].is.full.quadid;
-       h = (double) P4EST_DEVICE_QUADRANT_LEN (block_quad_levels[quadid]) / (double) P4EST_DEVICE_ROOT_LEN;
+       quadid = sides[i].quadid[0];
+       h = (double) P4EST_DEVICE_QUADRANT_LEN (sides[i].levels[0]) / (double) P4EST_DEVICE_ROOT_LEN;
  #ifndef P4_TO_P8
        facearea = h;
  #else
@@ -2520,7 +2520,7 @@ void step3_ghost_data_alloc_cuda_memory(user_data_for_cuda_t* user_data_api) {
   gpuErrchk(cudaMemcpyToSymbol(cuda_ctx_ptr, &ctx, sizeof(step3_ctx_t)));
   cuda4est->ctx_size = sizeof(step3_ctx_t);
   gpuErrchk(cudaGetSymbolAddress((void**)&(cuda4est->d_ctx), cuda_ctx_ptr));
-  cuda4est->block_quadrants_max_size = 128;
+  cuda4est->block_quadrants_max_size = 256;
   
    /* *INDENT-ON* */
  
@@ -2543,8 +2543,8 @@ void step3_ghost_data_alloc_cuda_memory(user_data_for_cuda_t* user_data_api) {
    p4est_partition (p4est, partforcoarsen, NULL);
  
    /* time step */
-   step3_timestep (cuda4est, 0.8);
-   //step3_timestep (cuda4est, 0.0003);
+   //step3_timestep (cuda4est, 0.8);
+   step3_timestep (cuda4est, 0.0003);
    //step3_timestep(cuda4est, 0.003);
  
    /* Destroy the p4est and the connectivity structure. */
